@@ -105,8 +105,13 @@ def auto_prepare_data_dir(data_dir: str = None) -> str:
                 if len(nested_subdirs) >= 3:
                     return nested
 
-    # Look for zip file in current, parent, or /content/ directories
     zip_candidates = [
+        "potatodata_compact.zip",
+        os.path.join("..", "potatodata_compact.zip"),
+        os.path.join("/content", "potatodata_compact.zip"),
+        "compact.zip",
+        os.path.join("..", "compact.zip"),
+        os.path.join("/content", "compact.zip"),
         "Potato Leaf Disease Dataset in Uncontrolled Environment.zip",
         os.path.join("..", "Potato Leaf Disease Dataset in Uncontrolled Environment.zip"),
         os.path.join("/content", "Potato Leaf Disease Dataset in Uncontrolled Environment.zip"),
@@ -119,7 +124,7 @@ def auto_prepare_data_dir(data_dir: str = None) -> str:
     for sdir in search_dirs:
         if os.path.isdir(sdir):
             for fname in os.listdir(sdir):
-                if fname.lower().endswith(".zip") and ("potato" in fname.lower() or "leaf" in fname.lower()):
+                if fname.lower().endswith(".zip") and any(k in fname.lower() for k in ["compact", "potato", "leaf", "plant"]):
                     full_p = os.path.join(sdir, fname)
                     if full_p not in zip_candidates:
                         zip_candidates.append(full_p)
