@@ -88,7 +88,10 @@ def auto_prepare_data_dir(data_dir: str = None) -> str:
         os.path.join("data", "potatodata", "Potato Leaf Disease Dataset in Uncontrolled Environment"),
         os.path.join("data", "potatodata"),
         os.path.join("..", "data", "potatodata"),
+        os.path.join("/content", "data", "potatodata"),
+        os.path.join("/content", "termpaper", "data", "potatodata"),
         "Potato Leaf Disease Dataset in Uncontrolled Environment",
+        os.path.join("/content", "Potato Leaf Disease Dataset in Uncontrolled Environment"),
     ]
     for path in candidate_paths:
         if path and os.path.isdir(path) and len(os.listdir(path)) > 0:
@@ -102,34 +105,48 @@ def auto_prepare_data_dir(data_dir: str = None) -> str:
                 if len(nested_subdirs) >= 3:
                     return nested
 
-    # Look for zip file in current and parent directory
+    # Look for zip file in current, parent, or /content/ directories
     zip_candidates = [
         "Potato Leaf Disease Dataset in Uncontrolled Environment.zip",
         os.path.join("..", "Potato Leaf Disease Dataset in Uncontrolled Environment.zip"),
+        os.path.join("/content", "Potato Leaf Disease Dataset in Uncontrolled Environment.zip"),
+        "potatodata.zip",
+        os.path.join("..", "potatodata.zip"),
+        os.path.join("/content", "potatodata.zip"),
     ]
+    # Also check if any zip file in current or parent directory matches
+    search_dirs = [".", "..", "/content"]
+    for sdir in search_dirs:
+        if os.path.isdir(sdir):
+            for fname in os.listdir(sdir):
+                if fname.lower().endswith(".zip") and ("potato" in fname.lower() or "leaf" in fname.lower()):
+                    full_p = os.path.join(sdir, fname)
+                    if full_p not in zip_candidates:
+                        zip_candidates.append(full_p)
+
     for zip_path in zip_candidates:
         if os.path.isfile(zip_path):
             target_extract_dir = os.path.join("data", "potatodata")
             os.makedirs(target_extract_dir, exist_ok=True)
-            print(f"[Dataset] Extracting '{zip_path}' into '{target_extract_dir}'...")
+            print(f"[Dataset] Found archive '{zip_path}'. Extracting into '{target_extract_dir}'...")
             with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                 for member in zip_ref.namelist():
-                    parts = member.split('/')
-                    if len(parts) >= 2 and parts[1]:
-                        class_folder = parts[1]
+                    # Handle both flat and nested folder structures
+                    parts = member.replace('\\', '/').split('/')
+                    if len(parts) >= 2 and parts[-1]:
+                        class_folder = parts[-2]
                         filename = parts[-1]
-                        if filename:
-                            out_class_dir = os.path.join(target_extract_dir, class_folder)
-                            os.makedirs(out_class_dir, exist_ok=True)
-                            out_file_path = os.path.join(out_class_dir, filename)
-                            with zip_ref.open(member) as source, open(out_file_path, "wb") as target:
-                                target.write(source.read())
+                        out_class_dir = os.path.join(target_extract_dir, class_folder)
+                        os.makedirs(out_class_dir, exist_ok=True)
+                        out_file_path = os.path.join(out_class_dir, filename)
+                        with zip_ref.open(member) as source, open(out_file_path, "wb") as target:
+                            target.write(source.read())
             print(f"[Dataset] Extracted dataset to '{target_extract_dir}'.")
             return target_extract_dir
 
     raise FileNotFoundError(
-        "Could not find dataset directory or 'Potato Leaf Disease Dataset in Uncontrolled Environment.zip'. "
-        "Please provide a valid data_dir path."
+        "Could not find dataset directory or 'Potato Leaf Disease Dataset in Uncontrolled Environment.zip'.\n"
+        "Please upload your dataset zip file to Google Colab, or specify --data_dir /path/to/extracted_folder"
     )
 
 
