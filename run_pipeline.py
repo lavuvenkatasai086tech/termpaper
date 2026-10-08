@@ -350,7 +350,11 @@ def main():
         "classes": class_names
     }
 
+    # Ensure results folder exists
+    os.makedirs("results", exist_ok=True)
     with open("evaluation_report.json", "w") as f:
+        json.dump(eval_report, f, indent=2)
+    with open("results/evaluation_report.json", "w") as f:
         json.dump(eval_report, f, indent=2)
 
     # Phase 5: Publication Plots
@@ -364,6 +368,7 @@ def main():
     plt.ylabel("Ground Truth Class", fontsize=11, weight="bold")
     plt.tight_layout()
     plt.savefig("confusion_matrix.png", dpi=300)
+    plt.savefig("results/confusion_matrix.png", dpi=300)
     plt.close()
 
     # 2. Multi-Panel Evaluation Plot
@@ -412,6 +417,7 @@ def main():
 
     plt.tight_layout()
     plt.savefig("evaluation_metrics.png", dpi=250)
+    plt.savefig("results/evaluation_metrics.png", dpi=250)
     plt.close()
 
     # Phase 6: Package Results Archive
@@ -421,10 +427,13 @@ def main():
         if os.path.exists(best_checkpoint_path):
             zf.write(best_checkpoint_path, arcname="best_model.pth")
         if os.path.exists("evaluation_report.json"):
+            zf.write("evaluation_report.json", arcname="results/evaluation_report.json")
             zf.write("evaluation_report.json", arcname="evaluation_report.json")
         if os.path.exists("evaluation_metrics.png"):
+            zf.write("evaluation_metrics.png", arcname="results/evaluation_metrics.png")
             zf.write("evaluation_metrics.png", arcname="evaluation_metrics.png")
         if os.path.exists("confusion_matrix.png"):
+            zf.write("confusion_matrix.png", arcname="results/confusion_matrix.png")
             zf.write("confusion_matrix.png", arcname="confusion_matrix.png")
 
     print("=" * 80, flush=True)

@@ -1,0 +1,186 @@
+{
+  "timestamp": "2026-10-07 00:23:15",
+  "model_architecture": "EfficientNetV2B3 + ViT (Sinamenye et al., 2025)",
+  "test_samples_count": 308,
+  "overall_metrics": {
+    "accuracy": 0.7565,
+    "macro_precision": 0.7662,
+    "weighted_precision": 0.7565,
+    "macro_recall": 0.7664,
+    "weighted_recall": 0.7565,
+    "macro_f1": 0.7631,
+    "weighted_f1": 0.7538,
+    "mcc": 0.705,
+    "cohens_kappa": 0.704,
+    "roc_auc_macro_ovr": 0.9449,
+    "roc_auc_weighted_ovr": 0.9343,
+    "cross_entropy_loss": 0.7917
+  },
+  "per_class_metrics": [
+    {
+      "class": "Bacteria",
+      "support": 57,
+      "tp": 53,
+      "fp": 10,
+      "fn": 4,
+      "tn": 241,
+      "precision": 0.8413,
+      "recall_sensitivity": 0.9298,
+      "specificity": 0.9602,
+      "f1_score": 0.8833,
+      "roc_auc": 0.9831
+    },
+    {
+      "class": "Fungi",
+      "support": 75,
+      "tp": 50,
+      "fp": 22,
+      "fn": 25,
+      "tn": 211,
+      "precision": 0.6944,
+      "recall_sensitivity": 0.6667,
+      "specificity": 0.9056,
+      "f1_score": 0.6803,
+      "roc_auc": 0.8967
+    },
+    {
+      "class": "Healthy",
+      "support": 20,
+      "tp": 16,
+      "fp": 5,
+      "fn": 4,
+      "tn": 283,
+      "precision": 0.7619,
+      "recall_sensitivity": 0.8,
+      "specificity": 0.9826,
+      "f1_score": 0.7805,
+      "roc_auc": 0.9578
+    },
+    {
+      "class": "Nematode",
+      "support": 7,
+      "tp": 5,
+      "fp": 1,
+      "fn": 2,
+      "tn": 300,
+      "precision": 0.8333,
+      "recall_sensitivity": 0.7143,
+      "specificity": 0.9967,
+      "f1_score": 0.7692,
+      "roc_auc": 0.9791
+    },
+    {
+      "class": "Pest",
+      "support": 61,
+      "tp": 38,
+      "fp": 14,
+      "fn": 23,
+      "tn": 233,
+      "precision": 0.7308,
+      "recall_sensitivity": 0.623,
+      "specificity": 0.9433,
+      "f1_score": 0.6726,
+      "roc_auc": 0.9146
+    },
+    {
+      "class": "Phytopthora",
+      "support": 35,
+      "tp": 30,
+      "fp": 14,
+      "fn": 5,
+      "tn": 259,
+      "precision": 0.6818,
+      "recall_sensitivity": 0.8571,
+      "specificity": 0.9487,
+      "f1_score": 0.7595,
+      "roc_auc": 0.9521
+    },
+    {
+      "class": "Virus",
+      "support": 53,
+      "tp": 41,
+      "fp": 9,
+      "fn": 12,
+      "tn": 246,
+      "precision": 0.82,
+      "recall_sensitivity": 0.7736,
+      "specificity": 0.9647,
+      "f1_score": 0.7961,
+      "roc_auc": 0.9313
+    }
+  ],
+  "confusion_matrix": [
+    [
+      53,
+      1,
+      0,
+      0,
+      1,
+      0,
+      2
+    ],
+    [
+      3,
+      50,
+      3,
+      1,
+      10,
+      4,
+      4
+    ],
+    [
+      0,
+      3,
+      16,
+      0,
+      1,
+      0,
+      0
+    ],
+    [
+      0,
+      0,
+      0,
+      5,
+      1,
+      1,
+      0
+    ],
+    [
+      1,
+      12,
+      1,
+      0,
+      38,
+      6,
+      3
+    ],
+    [
+      0,
+      5,
+      0,
+      0,
+      0,
+      30,
+      0
+    ],
+    [
+      6,
+      1,
+      1,
+      0,
+      1,
+      3,
+      41
+    ]
+  ],
+  "classes": [
+    "Bacteria",
+    "Fungi",
+    "Healthy",
+    "Nematode",
+    "Pest",
+    "Phytopthora",
+    "Virus"
+  ]
+}
