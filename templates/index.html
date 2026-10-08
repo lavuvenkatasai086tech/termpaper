@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgriVision AI | Potato Leaf Disease Diagnostic System</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <!-- Background glow ambient blobs -->
+    <div class="ambient-glow glow-1"></div>
+    <div class="ambient-glow glow-2"></div>
+    <div class="ambient-glow glow-3"></div>
+
+    <div class="app-wrapper">
+        <!-- Top Navigation / Header -->
+        <header class="app-header">
+            <div class="brand-container">
+                <div class="brand-logo">
+                    <i class="fa-solid fa-leaf"></i>
+                </div>
+                <div class="brand-text">
+                    <div class="brand-title">AgriVision <span>AI</span></div>
+                    <div class="brand-subtitle">Potato Pathology & Disease Diagnostic Suite</div>
+                </div>
+            </div>
+
+            <div class="header-badges">
+                <div class="status-badge" id="deviceBadge" title="Inference Hardware">
+                    <span class="status-dot"></span>
+                    <i class="fa-solid fa-microchip"></i>
+                    <span id="deviceText">Checking device...</span>
+                </div>
+                <div class="status-badge model-badge" id="modelBadge" title="Hybrid Architecture">
+                    <i class="fa-solid fa-network-wired"></i>
+                    <span>EfficientNetV2B3 + ViT</span>
+                </div>
+                <button class="nav-btn" id="openArchModalBtn">
+                    <i class="fa-solid fa-circle-nodes"></i> Model Architecture
+                </button>
+                <button class="nav-btn btn-highlight" id="openMetricsModalBtn">
+                    <i class="fa-solid fa-chart-line"></i> Evaluation & Benchmarks
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <main class="main-layout">
+            <!-- Left Panel: Input & Image Selection -->
+            <section class="panel input-panel">
+                <div class="panel-header">
+                    <h2><i class="fa-solid fa-camera"></i> Leaf Specimen Input</h2>
+                    <span class="badge-pill">RGB 224x224</span>
+                </div>
+
+                <!-- Dropzone Area -->
+                <div class="dropzone" id="dropzone">
+                    <input type="file" id="fileInput" accept="image/*" class="file-input-hidden">
+                    <div class="dropzone-content" id="dropzoneEmpty">
+                        <div class="dropzone-icon">
+                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                        </div>
+                        <h3>Upload Leaf Photograph</h3>
+                        <p>Drag and drop a potato leaf image, or <span class="highlight-link">browse files</span></p>
+                        <div class="file-specs">Supports JPG, PNG, WEBP &bull; Max 16MB</div>
+                    </div>
+
+                    <!-- Image Preview Container -->
+                    <div class="preview-container hidden" id="previewContainer">
+                        <img id="imagePreview" src="" alt="Specimen Preview">
+                        <div class="scan-overlay hidden" id="scanOverlay">
+                            <div class="scan-line"></div>
+                        </div>
+                        <button class="remove-img-btn" id="removeImgBtn" title="Remove image">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <button class="btn btn-primary" id="analyzeBtn" disabled>
+                    <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    <span>Analyze Disease & Symptoms</span>
+                </button>
+
+                <!-- Dataset Sample Browser -->
+                <div class="sample-section">
+                    <div class="sample-header">
+                        <h4><i class="fa-solid fa-vial"></i> Or Select Uncontrolled Dataset Samples</h4>
+                        <span class="sample-counter" id="sampleCount">Loading samples...</span>
+                    </div>
+
+                    <!-- Class filter tabs -->
+                    <div class="class-chips" id="classChips">
+                        <button class="chip active" data-class="all">All</button>
+                        <button class="chip" data-class="Bacteria">Bacteria</button>
+                        <button class="chip" data-class="Fungi">Fungi</button>
+                        <button class="chip" data-class="Healthy">Healthy</button>
+                        <button class="chip" data-class="Nematode">Nematode</button>
+                        <button class="chip" data-class="Pest">Pest</button>
+                        <button class="chip" data-class="Phytopthora">Phytophthora</button>
+                        <button class="chip" data-class="Virus">Virus</button>
+                    </div>
+
+                    <!-- Sample thumbnails grid -->
+                    <div class="sample-grid" id="sampleGrid">
+                        <!-- Loaded dynamically via JavaScript -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Panel: Diagnostic Results & Pathology Recommendations -->
+            <section class="panel results-panel" id="resultsPanel">
+                <!-- Initial Empty State -->
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-state-icon">
+                        <i class="fa-solid fa-microscope"></i>
+                    </div>
+                    <h3>Awaiting Leaf Specimen</h3>
+                    <p>Upload a photograph of a potato leaf or click one of the dataset sample specimens to trigger the dual-backbone diagnostic engine.</p>
+                    <div class="feature-tags">
+                        <span><i class="fa-solid fa-check"></i> 7 Disease Classes</span>
+                        <span><i class="fa-solid fa-check"></i> Sinamenye et al. 2025</span>
+                        <span><i class="fa-solid fa-check"></i> Agronomic Treatment</span>
+                    </div>
+                </div>
+
+                <!-- Loading State -->
+                <div class="analyzing-state hidden" id="analyzingState">
+                    <div class="pulsing-leaf">
+                        <i class="fa-solid fa-dna"></i>
+                    </div>
+                    <h3>Extracting Multimodal Visual Features</h3>
+                    <div class="step-tracker">
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> CNN Local Feature Map (GAP 1536-d)</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> ViT Patch CLS Attention (512-d)</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> 2048-d Feature Concatenation & Logits</div>
+                    </div>
+                </div>
+
+                <!-- Full Diagnostic Result Display -->
+                <div class="diagnosis-wrapper hidden" id="diagnosisWrapper">
+                    <!-- Top Summary Card -->
+                    <div class="diagnostic-summary-card">
+                        <div class="summary-top">
+                            <div>
+                                <span class="severity-tag" id="resSeverity">Critical</span>
+                                <h2 class="res-title" id="resTitle">Late Blight (Phytophthora)</h2>
+                                <div class="res-pathogen" id="resPathogen">Pathogen: Phytophthora infestans</div>
+                            </div>
+                            <div class="confidence-circle" id="resConfidenceCircle">
+                                <div class="circle-inner">
+                                    <span class="conf-val" id="resConfidence">96.4%</span>
+                                    <span class="conf-lbl">Confidence</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <p class="summary-desc" id="resSummary">
+                            Late blight causes water-soaked foliar lesions with white cottony sporulation on leaf undersides, rapidly devastating potato fields.
+                        </p>
+                    </div>
+
+                    <!-- Probabilities Distribution -->
+                    <div class="card prob-card">
+                        <h4><i class="fa-solid fa-chart-column"></i> Multi-Class Probability Distribution</h4>
+                        <div class="prob-list" id="probList">
+                            <!-- Populated dynamically -->
+                        </div>
+                    </div>
+
+                    <!-- Agronomic Advisory Tabs -->
+                    <div class="card treatment-card">
+                        <div class="advisory-tabs">
+                            <button class="adv-tab active" data-tab="symptoms">
+                                <i class="fa-solid fa-eye"></i> Symptoms
+                            </button>
+                            <button class="adv-tab" data-tab="organic">
+                                <i class="fa-solid fa-seedling"></i> Organic Control
+                            </button>
+                            <button class="adv-tab" data-tab="chemical">
+                                <i class="fa-solid fa-flask-vial"></i> Chemical Treatment
+                            </button>
+                            <button class="adv-tab" data-tab="prevention">
+                                <i class="fa-solid fa-shield-halved"></i> Prevention
+                            </button>
+                        </div>
+
+                        <div class="tab-pane active" id="pane-symptoms">
+                            <h5>Key Characteristic Visual Markers</h5>
+                            <ul class="bullet-list" id="symptomsList"></ul>
+                        </div>
+
+                        <div class="tab-pane" id="pane-organic">
+                            <h5>Cultural & Biological Control Guidelines</h5>
+                            <ul class="bullet-list" id="organicList"></ul>
+                        </div>
+
+                        <div class="tab-pane" id="pane-chemical">
+                            <h5>Recommended Chemical Formulations & Dosing</h5>
+                            <ul class="bullet-list" id="chemicalList"></ul>
+                        </div>
+
+                        <div class="tab-pane" id="pane-prevention">
+                            <h5>Field Sanitation & Long-Term Management</h5>
+                            <ul class="bullet-list" id="preventionList"></ul>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Architecture & Specifications Modal -->
+        <div class="modal-backdrop hidden" id="archModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <i class="fa-solid fa-circle-nodes"></i>
+                        <span>Hybrid EfficientNetV2B3 + ViT Pipeline Architecture</span>
+                    </div>
+                    <button class="modal-close-btn" id="closeArchModalBtn"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body">
+                    <p class="modal-paper-cite">
+                        Based on Sinamenye et al. (2025), <em>"Potato plant disease detection: leveraging hybrid deep learning models"</em>, BMC Plant Biology.
+                    </p>
+
+                    <div class="arch-diagram">
+                        <div class="arch-node input-node">
+                            <strong>Input Image</strong>
+                            <span>RGB (224 &times; 224 &times; 3)</span>
+                        </div>
+                        <div class="arch-branch-container">
+                            <div class="arch-branch">
+                                <div class="branch-tag cnn-tag">CNN Branch (Local)</div>
+                                <div class="arch-box">
+                                    <strong>EfficientNetV2B3</strong>
+                                    <span>Pre-trained ImageNet-21k (Frozen)</span>
+                                </div>
+                                <div class="arch-arrow">&darr;</div>
+                                <div class="arch-box">
+                                    <strong>GAP Flatten</strong>
+                                    <span>Vector Dim: 1536</span>
+                                </div>
+                            </div>
+                            <div class="arch-branch">
+                                <div class="branch-tag vit-tag">ViT Branch (Global)</div>
+                                <div class="arch-box">
+                                    <strong>ViT-Base (16&times;16 patch)</strong>
+                                    <span>Pre-trained ImageNet-21k (Frozen)</span>
+                                </div>
+                                <div class="arch-arrow">&darr;</div>
+                                <div class="arch-box">
+                                    <strong>[CLS] Linear Projection</strong>
+                                    <span>768 &rarr; 512 dimensions</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="arch-arrow">&darr; Concatenation &darr;</div>
+                        <div class="arch-node fusion-node">
+                            <strong>Dual-Path Concatenation Layer</strong>
+                            <span>1536 (Local) + 512 (Global) = 2048 Dimensions</span>
+                        </div>
+                        <div class="arch-arrow">&darr;</div>
+                        <div class="arch-node head-node">
+                            <strong>Dropout (rate = 0.2) &amp; Classification Head</strong>
+                            <span>Linear (2048 &rarr; 7 Target Disease Classes) + Softmax</span>
+                        </div>
+                    </div>
+
+                    <div class="hyperparam-grid">
+                        <div class="param-box">
+                            <span class="param-label">Target Classes</span>
+                            <span class="param-val">7 Classes</span>
+                        </div>
+                        <div class="param-box">
+                            <span class="param-label">Augmentation</span>
+                            <span class="param-val">Affine, ColorJitter, Flips</span>
+                        </div>
+                        <div class="param-box">
+                            <span class="param-label">Optimizer</span>
+                            <span class="param-val">Adam (lr = 1e-4)</span>
+                        </div>
+                        <div class="param-box">
+                            <span class="param-label">Scheduler</span>
+                            <span class="param-val">ReduceLROnPlateau</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Evaluation & Benchmarks Modal -->
+        <div class="modal-backdrop hidden" id="metricsModal">
+            <div class="modal-content modal-lg">
+                <div class="modal-header">
+                    <div class="modal-title">
+                        <i class="fa-solid fa-chart-line"></i>
+                        <span>Model Evaluation Metrics & Published Benchmark Comparison</span>
+                    </div>
+                    <button class="modal-close-btn" id="closeMetricsModalBtn"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Benchmark Comparison Cards -->
+                    <div class="benchmark-grid">
+                        <div class="benchmark-card current-model">
+                            <div class="bm-header">
+                                <span class="bm-badge">Trained Model</span>
+                                <h4>EfficientNetV2B3 + ViT</h4>
+                                <span class="bm-sub">Evaluated on Full Dataset (3,076 images)</span>
+                            </div>
+                            <div class="bm-stat-row">
+                                <div class="bm-stat">
+                                    <span class="bm-val" id="mAcc">75.65%</span>
+                                    <span class="bm-lbl">Test Accuracy</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val" id="mF1">76.31%</span>
+                                    <span class="bm-lbl">Macro F1</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val" id="mPrec">76.62%</span>
+                                    <span class="bm-lbl">Precision</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val" id="mMcc">0.7050</span>
+                                    <span class="bm-lbl">MCC</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="benchmark-card paper-model">
+                            <div class="bm-header">
+                                <span class="bm-badge paper-badge">Paper Benchmark</span>
+                                <h4>Sinamenye et al. (2025)</h4>
+                                <span class="bm-sub">BMC Plant Biology (DOI: 10.1186/s12870-025-06679-4)</span>
+                            </div>
+                            <div class="bm-stat-row">
+                                <div class="bm-stat">
+                                    <span class="bm-val highlight-val">85.06%</span>
+                                    <span class="bm-lbl">Published Acc</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val highlight-val">83.77%</span>
+                                    <span class="bm-lbl">Published F1</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val highlight-val">82.86%</span>
+                                    <span class="bm-lbl">Precision</span>
+                                </div>
+                                <div class="bm-stat">
+                                    <span class="bm-val highlight-val">0.8200</span>
+                                    <span class="bm-lbl">MCC</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Evaluation Visuals -->
+                    <div class="metrics-visuals-container">
+                        <div class="visual-tabs">
+                            <button class="v-tab active" data-vtab="fourpanel">
+                                <i class="fa-solid fa-chart-pie"></i> 4-Panel Analysis
+                            </button>
+                            <button class="v-tab" data-vtab="confusion">
+                                <i class="fa-solid fa-table-cells"></i> Confusion Matrix
+                            </button>
+                        </div>
+
+                        <div class="v-pane active" id="vpane-fourpanel">
+                            <img src="/api/metrics-plot" alt="4-Panel Evaluation Metrics" class="metrics-img">
+                        </div>
+                        <div class="v-pane" id="vpane-confusion">
+                            <img src="/api/confusion-matrix-plot" alt="Confusion Matrix" class="metrics-img">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>Potato Leaf Disease Detection System &bull; Term Paper Deep Learning Implementation &bull; PyTorch &amp; Flask</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

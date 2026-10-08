@@ -1,0 +1,41 @@
+# Python bytecode and cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Large Datasets and Archives (> 100MB, rejected by GitHub)
+*.zip
+*.tar.gz
+*.rar
+data/
+PlantVillage/
+Potato Leaf Disease Dataset in Uncontrolled Environment/
+
+# Model Checkpoints, Weights & Large Tensors (> 100MB, rejected by GitHub)
+*.pth
+*.pt
+*.safetensors
+*.bin
+*.onnx
+weights/
+checkpoints/*.pth
+checkpoints/*.pt
+!checkpoints/.gitkeep
+
+# Environments & Secret configs
+.env
+.venv/
+env/
+venv/
+ENV/
+.virtualenv/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

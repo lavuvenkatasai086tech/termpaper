@@ -1,0 +1,15 @@
+.idea/
+rename_images.log
+wandb/
+__pycache__/
+_saved_models/
+backup/
+*.png
+*.pth
+visualisations.ipynb
+.env
+.ipynb_checkpoints
+data/plantVillage/*
+!data/plantVillage/.gitkeep
+data/potatodata/*
+!data/potatodata/.gitkeep
