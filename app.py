@@ -467,31 +467,39 @@ def api_samples():
                         "url": f"/api/sample-image/{rel_path}"
                     })
 
-    # Add curated non-potato leaf test specimens across multiple crops (Near-OOD)
+    # Add curated non-potato test specimens across diverse crops and everyday objects (Out-of-Distribution / Non-Potato)
     pv_dir = os.path.join(os.path.dirname(__file__), "PlantVillage")
     if os.path.exists(pv_dir):
         pv_crops = [
-            ("Tomato_Leaf_Mold", "Tomato Leaf (Near-OOD)"),
-            ("Pepper__bell___healthy", "Pepper Bell Leaf (Near-OOD)"),
-            ("Apple___healthy", "Apple Leaf (Near-OOD)"),
-            ("Corn___healthy", "Corn Leaf (Near-OOD)"),
-            ("Grape___healthy", "Grape Leaf (Near-OOD)")
+            ("Tomato_Leaf_Mold", "Tomato Leaf (Non-Potato)", 1),
+            ("Corn_maize___Northern_Leaf_Blight", "Corn Leaf (Non-Potato)", 1),
+            ("Orange___Haunglongbing_Citrus_greening", "Citrus Leaf (Non-Potato)", 1),
+            ("Apple___healthy", "Apple Leaf (Non-Potato)", 1),
+            ("Peach___healthy", "Peach Leaf (Non-Potato)", 1),
+            ("Squash___Powdery_mildew", "Squash Leaf (Non-Potato)", 1),
+            ("Outdoor_Non_Potato", "Outdoor Foliage (Non-Potato)", 2),
+            ("Non_Plant_Objects", "Object (Non-Plant)", 3),
         ]
-        for folder, label in pv_crops:
+        object_labels = {
+            "coffee_mug.jpg": "Coffee Mug (Non-Plant)",
+            "laptop_desk.jpg": "Laptop Desk (Non-Plant)",
+            "parked_car.jpg": "Parked Car (Non-Plant)",
+        }
+        for folder, label, max_count in pv_crops:
             folder_path = os.path.join(pv_dir, folder)
             if os.path.isdir(folder_path):
-                files = [f for f in os.listdir(folder_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))]
-                if files:
-                    fname = files[0]
+                files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
+                for fname in files[:max_count]:
                     rel_path = f"PlantVillage/{folder}/{fname}"
+                    display_label = object_labels.get(fname, label)
                     samples.append({
                         "class_name": "Non-Potato (OOD)",
                         "filename": fname,
-                        "label": label,
+                        "label": display_label,
                         "relative_path": rel_path,
-                        "url": f"/api/sample-image/{rel_path}"
+                        "url": f"/api/sample-image/{rel_path}",
+                        "is_ood": True
                     })
-
 
     return jsonify({"samples": samples, "total": len(samples)})
 

@@ -148,15 +148,17 @@ document.addEventListener("DOMContentLoaded", () => {
             : sampleList.filter(s => s.class_name.toLowerCase() === filterClass.toLowerCase());
 
         filtered.forEach(sample => {
+            const isOod = sample.is_ood || sample.class_name.includes("Non-Potato");
             const item = document.createElement("div");
-            item.className = "sample-item";
+            item.className = "sample-item" + (isOod ? " sample-item-ood" : "");
             item.dataset.path = sample.relative_path;
             item.dataset.class = sample.class_name;
-            item.title = `Click to test: ${sample.class_name} (${sample.filename})`;
+            const displayTitle = sample.label || sample.class_name;
+            item.title = `Click to test: ${displayTitle}`;
 
             item.innerHTML = `
-                <img src="${sample.url}" alt="${sample.class_name}" loading="lazy">
-                <div class="sample-tag">${sample.class_name}</div>
+                <img src="${sample.url}" alt="${displayTitle}" loading="lazy">
+                <div class="sample-tag ${isOod ? 'ood-sample-tag' : ''}">${isOod ? '<i class="fa-solid fa-triangle-exclamation"></i> ' : ''}${displayTitle}</div>
             `;
 
             item.addEventListener("click", () => {
