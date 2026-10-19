@@ -50,6 +50,20 @@
             </div>
         </header>
 
+        <!-- Global Notification / Alert Banner -->
+        <div class="alert-banner alert-danger hidden" id="globalAlertBanner">
+            <div class="alert-banner-icon">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <div class="alert-banner-text">
+                <strong id="globalAlertTitle">Incorrect Input:</strong>
+                <span id="globalAlertMessage">Please upload a valid, clear image of a potato leaf.</span>
+            </div>
+            <button class="alert-banner-close" id="closeAlertBannerBtn" title="Dismiss">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
         <!-- Main Content Grid -->
         <main class="main-layout">
             <!-- Left Panel: Input & Image Selection -->
@@ -58,6 +72,7 @@
                     <h2><i class="fa-solid fa-camera"></i> Leaf Specimen Input</h2>
                     <span class="badge-pill">RGB 224x224</span>
                 </div>
+
 
                 <!-- Dropzone Area -->
                 <div class="dropzone" id="dropzone">
@@ -106,7 +121,9 @@
                         <button class="chip" data-class="Pest">Pest</button>
                         <button class="chip" data-class="Phytopthora">Phytophthora</button>
                         <button class="chip" data-class="Virus">Virus</button>
+                        <button class="chip chip-ood" data-class="Non-Potato (OOD)" style="border-color: rgba(239, 68, 68, 0.4); color: #f87171;"><i class="fa-solid fa-triangle-exclamation"></i> Non-Potato (OOD Test)</button>
                     </div>
+
 
                     <!-- Sample thumbnails grid -->
                     <div class="sample-grid" id="sampleGrid">
@@ -144,13 +161,37 @@
                     </div>
                 </div>
 
+                <!-- Invalid Image Alert State -->
+                <div class="ood-alert-wrapper hidden" id="oodAlertWrapper">
+                    <div class="ood-card invalid-alert-card">
+                        <div class="ood-card-glow"></div>
+                        <div class="invalid-alert-content">
+                            <div class="invalid-alert-icon">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </div>
+                            <h2 class="invalid-alert-heading">Invalid Image</h2>
+                            <p class="ood-title" id="oodTitle">Please upload a valid potato leaf image.</p>
+                            <div class="ood-actions">
+                                <button class="btn btn-primary" id="oodTryAgainBtn">
+                                    <i class="fa-solid fa-cloud-arrow-up"></i> Upload Another Specimen
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Full Diagnostic Result Display -->
                 <div class="diagnosis-wrapper hidden" id="diagnosisWrapper">
                     <!-- Top Summary Card -->
                     <div class="diagnostic-summary-card">
                         <div class="summary-top">
                             <div>
-                                <span class="severity-tag" id="resSeverity">Critical</span>
+                                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                                    <span class="severity-tag" id="resSeverity">Critical</span>
+                                    <span class="badge-pill" id="resEnergyBadge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.75rem; padding: 3px 8px;">
+                                        <i class="fa-solid fa-circle-check"></i> In-Distribution (Energy: <span id="resEnergyScore">-1.15</span>)
+                                    </span>
+                                </div>
                                 <h2 class="res-title" id="resTitle">Late Blight (Phytophthora)</h2>
                                 <div class="res-pathogen" id="resPathogen">Pathogen: Phytophthora infestans</div>
                             </div>

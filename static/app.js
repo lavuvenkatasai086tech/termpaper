@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let selectedFile = null;
     let selectedSamplePath = null;
     let sampleList = [];
+    let currentEnergyThreshold = 0.50;
 
     // DOM Elements
     const dropzone = document.getElementById("dropzone");
@@ -13,6 +14,20 @@ document.addEventListener("DOMContentLoaded", () => {
     const removeImgBtn = document.getElementById("removeImgBtn");
     const scanOverlay = document.getElementById("scanOverlay");
     const analyzeBtn = document.getElementById("analyzeBtn");
+
+    const globalAlertBanner = document.getElementById("globalAlertBanner");
+    const globalAlertTitle = document.getElementById("globalAlertTitle");
+    const globalAlertMessage = document.getElementById("globalAlertMessage");
+    const closeAlertBannerBtn = document.getElementById("closeAlertBannerBtn");
+
+    const thresholdSlider = document.getElementById("thresholdSlider");
+    const thresholdDisplay = document.getElementById("thresholdDisplay");
+    const headerThreshold = document.getElementById("headerThreshold");
+
+    const oodAlertWrapper = document.getElementById("oodAlertWrapper");
+    const oodConfidenceVal = document.getElementById("oodConfidenceVal");
+    const oodThresholdVal = document.getElementById("oodThresholdVal");
+    const oodTryAgainBtn = document.getElementById("oodTryAgainBtn");
 
     const sampleGrid = document.getElementById("sampleGrid");
     const sampleCount = document.getElementById("sampleCount");
@@ -43,6 +58,48 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize System Status
     fetchHealthStatus();
     loadDatasetSamples();
+    setupThresholdControls();
+    setupAlertBanner();
+
+    // 0. Notification Banner Controls
+    function setupAlertBanner() {
+        if (closeAlertBannerBtn) {
+            closeAlertBannerBtn.addEventListener("click", hideNotificationBanner);
+        }
+    }
+
+    function showNotificationBanner(message, type = "danger") {
+        if (!globalAlertBanner) return;
+        if (globalAlertTitle) globalAlertTitle.textContent = "";
+        if (globalAlertMessage) globalAlertMessage.textContent = message;
+        globalAlertBanner.className = `alert-banner alert-${type}`;
+        globalAlertBanner.classList.remove("hidden");
+    }
+
+    function hideNotificationBanner() {
+        if (!globalAlertBanner) return;
+        globalAlertBanner.classList.add("hidden");
+    }
+
+    // 0.1 Energy Threshold Slider Controls
+    function setupThresholdControls() {
+        if (thresholdSlider) {
+            thresholdSlider.addEventListener("input", (e) => {
+                const val = parseInt(e.target.value, 10);
+                currentEnergyThreshold = val / 100;
+                const formatted = (currentEnergyThreshold >= 0 ? "+" : "") + currentEnergyThreshold.toFixed(2);
+                if (thresholdDisplay) thresholdDisplay.textContent = `${formatted} Energy`;
+                if (headerThreshold) headerThreshold.textContent = `${formatted} Energy`;
+                if (oodThresholdVal) oodThresholdVal.textContent = `${formatted}`;
+            });
+        }
+        if (oodTryAgainBtn) {
+            oodTryAgainBtn.addEventListener("click", () => {
+                resetInput();
+                fileInput.click();
+            });
+        }
+    }
 
     // 1. Health Status
     async function fetchHealthStatus() {
@@ -54,6 +111,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 deviceText.innerHTML = `<span style="color: #10b981;">GPU (CUDA)</span>`;
             } else {
                 deviceText.innerHTML = `<span>CPU Inference</span>`;
+            }
+            if (data.energy_threshold !== undefined) {
+                currentEnergyThreshold = data.energy_threshold;
+                const intVal = Math.round(currentEnergyThreshold * 100);
+                const formatted = (currentEnergyThreshold >= 0 ? "+" : "") + currentEnergyThreshold.toFixed(2);
+                if (thresholdSlider) thresholdSlider.value = intVal;
+                if (thresholdDisplay) thresholdDisplay.textContent = `${formatted} Energy`;
+                if (headerThreshold) headerThreshold.textContent = `${formatted} Energy`;
+                if (oodThresholdVal) oodThresholdVal.textContent = `${formatted}`;
             }
         } catch (err) {
             console.error("Health check error:", err);
@@ -191,6 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
         dropzoneEmpty.classList.remove("hidden");
         analyzeBtn.disabled = true;
         scanOverlay.classList.add("hidden");
+        hideNotificationBanner();
         showState("empty");
     }
 
@@ -203,6 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
         showState("analyzing");
         scanOverlay.classList.remove("hidden");
         analyzeBtn.disabled = true;
+        hideNotificationBanner();
 
         const formData = new FormData();
         if (selectedFile) {
@@ -210,6 +278,8 @@ document.addEventListener("DOMContentLoaded", () => {
         } else if (selectedSamplePath) {
             formData.append("sample_path", selectedSamplePath);
         }
+        formData.append("energy_threshold", currentEnergyThreshold);
+        formData.append("threshold", currentEnergyThreshold);
 
         try {
             const startTime = performance.now();
@@ -231,20 +301,31 @@ document.addEventListener("DOMContentLoaded", () => {
             setTimeout(() => {
                 scanOverlay.classList.add("hidden");
                 analyzeBtn.disabled = false;
-                renderResults(data);
-                showState("results");
+
+                // Out-of-Distribution (OOD) / Invalid Input Check
+                if (data.is_ood || data.is_valid === false) {
+                    // Suppress disease output and show simple alert
+                    renderOodAlert(data);
+                    showState("ood");
+                    const alertMsg = data.error_message || "Invalid Image: Please upload a valid potato leaf image.";
+                    showNotificationBanner(alertMsg, "danger");
+                } else {
+                    hideNotificationBanner();
+                    renderResults(data);
+                    showState("results");
+                }
             }, remainingDelay);
 
         } catch (err) {
             console.error("Diagnosis error:", err);
             scanOverlay.classList.add("hidden");
             analyzeBtn.disabled = false;
-            alert("Error analyzing image: " + err.message);
+            showNotificationBanner("Error analyzing image: " + err.message, "danger");
             showState("empty");
         }
     }
 
-    // 6. Render Results
+    // 6. Render Results for Valid Specimen
     function renderResults(data) {
         const details = data.details || {};
         const conf = data.confidence || 0;
@@ -254,6 +335,12 @@ document.addEventListener("DOMContentLoaded", () => {
         resPathogen.textContent = `Pathogen: ${details.pathogen || 'N/A'}`;
         resSeverity.textContent = details.severity || 'Unknown';
         resSeverity.style.backgroundColor = details.severity_color || '#dc2626';
+
+        // Energy Score for In-Distribution Specimen
+        const resEnergyScore = document.getElementById("resEnergyScore");
+        if (resEnergyScore && data.energy_score !== undefined) {
+            resEnergyScore.textContent = `${data.energy_score >= 0 ? "+" : ""}${data.energy_score.toFixed(2)}`;
+        }
 
         // Confidence circle & value
         resConfidence.textContent = `${conf.toFixed(1)}%`;
@@ -295,6 +382,14 @@ document.addEventListener("DOMContentLoaded", () => {
         populateList(preventionList, details.prevention);
     }
 
+    // 6.1 Render Invalid Input Alert
+    function renderOodAlert(data) {
+        const oodTitle = document.querySelector(".ood-title");
+        if (oodTitle) {
+            oodTitle.textContent = data.error_message || "Please upload a valid potato leaf image.";
+        }
+    }
+
     function populateList(ulElement, items) {
         ulElement.innerHTML = "";
         if (!items || items.length === 0) {
@@ -311,10 +406,12 @@ document.addEventListener("DOMContentLoaded", () => {
     function showState(state) {
         emptyState.classList.add("hidden");
         analyzingState.classList.add("hidden");
+        if (oodAlertWrapper) oodAlertWrapper.classList.add("hidden");
         diagnosisWrapper.classList.add("hidden");
 
         if (state === "empty") emptyState.classList.remove("hidden");
         else if (state === "analyzing") analyzingState.classList.remove("hidden");
+        else if (state === "ood" && oodAlertWrapper) oodAlertWrapper.classList.remove("hidden");
         else if (state === "results") diagnosisWrapper.classList.remove("hidden");
     }
 
