@@ -9,111 +9,101 @@ from PIL import Image
 import torch
 import torch.nn.functional as F
 
-# Try importing model components
-try:
-    from model import EfficientNetV2B3ViT
-    from dataset import get_transforms
-except Exception as e:
-    EfficientNetV2B3ViT = None
-    get_transforms = None
+from src.model import EnhancedHybridEfficientNetViT, EfficientNetV2B3ViT
+from src.ood_detector import OODGatekeeper, EXACT_INVALID_INPUT_MESSAGE
+from src.xai import XAIExplainer
+from src.dataset import get_transforms
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB max
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
+BASE_DIR = os.path.dirname(__file__)
 DATA_DIR = os.path.join(
-    os.path.dirname(__file__),
+    BASE_DIR,
     "data",
     "potatodata",
     "Potato Leaf Disease Dataset in Uncontrolled Environment"
 )
-CHECKPOINT_DIR = os.path.join(os.path.dirname(__file__), "checkpoints")
+CHECKPOINT_DIR = os.path.join(BASE_DIR, "checkpoints")
 BEST_MODEL_PATH = os.path.join(CHECKPOINT_DIR, "best_model.pth")
-OOD_CENTROIDS_PATH = os.path.join(CHECKPOINT_DIR, "potato_ood_centroids.pt")
-ood_centroids_data = None
+CONFIG_PATH = os.path.join(BASE_DIR, "configs", "config.yaml")
 
 CLASS_NAMES = ["Bacteria", "Fungi", "Healthy", "Nematode", "Pest", "Phytopthora", "Virus"]
-DEFAULT_ENERGY_THRESHOLD = 0.50  # Energy threshold for Out-of-Distribution (OOD) rejection
+DEFAULT_ENERGY_THRESHOLD = 0.50
 DEFAULT_TEMPERATURE = 1.0
 
+# Global device and components
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model_instance = None
+gatekeeper_instance = None
+xai_instance = None
 
-STAGE1_FILTER_PATH = os.path.join(CHECKPOINT_DIR, "potato_binary_filter.pth")
-stage1_model_data = None
-
-class CosineClassifier(torch.nn.Module):
-    def __init__(self, in_features=576, num_classes=2, scale=12.0):
-        super().__init__()
-        self.scale = scale
-        self.fc1 = torch.nn.Linear(in_features, 512)
-        self.act = torch.nn.Hardswish()
-        self.drop = torch.nn.Dropout(0.2)
-        self.weight = torch.nn.Parameter(torch.randn(num_classes, 512))
-
-    def forward(self, x):
-        h = self.drop(self.act(self.fc1(x)))
-        h_norm = F.normalize(h, p=2, dim=1)
-        w_norm = F.normalize(self.weight, p=2, dim=1)
-        return self.scale * torch.matmul(h_norm, w_norm.t())
-
-class Stage1Filter(torch.nn.Module):
-    def __init__(self, backbone, classifier):
-        super().__init__()
-        self.backbone = backbone
-        self.classifier = classifier
-
-    def forward(self, x):
-        f = torch.flatten(self.backbone(x), 1)
-        return self.classifier(f)
-
-def load_stage1_filter():
-    global stage1_model_data
-    if stage1_model_data is None and os.path.exists(STAGE1_FILTER_PATH):
-        try:
-            from torchvision import models
-            ckpt = torch.load(STAGE1_FILTER_PATH, map_location="cpu")
-            base = models.mobilenet_v3_small(weights=None)
-            backbone = torch.nn.Sequential(base.features, base.avgpool)
-            if "backbone_state_dict" in ckpt:
-                backbone.load_state_dict(ckpt["backbone_state_dict"])
-            backbone.eval()
-
-            classifier = CosineClassifier()
-            if "classifier_state_dict" in ckpt:
-                classifier.load_state_dict(ckpt["classifier_state_dict"])
-            classifier.eval()
-
-            stage1_model_data = Stage1Filter(backbone, classifier)
-            stage1_model_data.eval()
-            logging.info("[App] Stage 1 Robust Binary Leaf Filter (MobileNetV3 Cosine) loaded successfully.")
-        except Exception as e:
-            logging.warning(f"[App] Could not load Stage 1 filter: {e}")
-    return stage1_model_data
-
-def load_ood_centroids():
-    global ood_centroids_data
-    if ood_centroids_data is None and os.path.exists(OOD_CENTROIDS_PATH):
-        try:
-            ood_centroids_data = torch.load(OOD_CENTROIDS_PATH, map_location="cpu")
-            logging.info("[App] Calibrated potato & non-potato OOD centroids loaded.")
-        except Exception as e:
-            logging.warning(f"[App] Could not load OOD centroids: {e}")
-    return ood_centroids_data
+model_status_info = {
+    "loaded": False,
+    "device": str(device),
+    "model_type": "Enhanced Hybrid EfficientNetV2-B3 + ViT (Sinamenye et al., 2025)",
+    "weights_path": None,
+    "message": "Initializing components..."
+}
 
 
+def get_gatekeeper():
+    global gatekeeper_instance
+    if gatekeeper_instance is None:
+        gatekeeper_instance = OODGatekeeper(
+            config_path=CONFIG_PATH,
+            checkpoint_dir=CHECKPOINT_DIR,
+            device=device,
+        )
+    return gatekeeper_instance
 
-def compute_energy_score(logits, temperature: float = DEFAULT_TEMPERATURE) -> float:
-    """
-    Computes non-Softmax Energy-Based Out-of-Distribution (OOD) score:
-    Energy(x) = - T * logsumexp(logits / T)
-    Lower free energy indicates high density / in-distribution potato leaf sample.
-    Higher free energy (Energy(x) > threshold) indicates out-of-distribution input.
-    """
-    if not isinstance(logits, torch.Tensor):
-        logits = torch.tensor(logits)
-    scaled_logits = logits / temperature
-    energy = - temperature * torch.logsumexp(scaled_logits, dim=-1)
-    return float(energy.item() if energy.dim() == 0 else energy[0].item())
+
+def get_xai():
+    global xai_instance
+    if xai_instance is None:
+        xai_instance = XAIExplainer()
+    return xai_instance
+
+
+def load_or_init_model():
+    global model_instance, model_status_info
+    if model_instance is not None:
+        return model_instance
+
+    try:
+        logging.info("[App] Initializing EnhancedHybridEfficientNetViT model...")
+        model = EnhancedHybridEfficientNetViT(
+            num_classes=len(CLASS_NAMES),
+            use_se_gating=True,
+        )
+        model.to(device)
+
+        if os.path.exists(BEST_MODEL_PATH):
+            logging.info(f"[App] Loading weights from {BEST_MODEL_PATH}")
+            ckpt = torch.load(BEST_MODEL_PATH, map_location=device)
+            state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
+            model.load_state_dict(state_dict, strict=False)
+            model_status_info["weights_path"] = BEST_MODEL_PATH
+            model_status_info["loaded"] = True
+            model_status_info["message"] = "Trained model checkpoint loaded successfully."
+        else:
+            model_status_info["loaded"] = True
+            model_status_info["weights_path"] = "Pretrained Backbones (Zero-Shot / Base Features)"
+            model_status_info["message"] = "Model ready with pretrained EfficientNetV2-B3 & ViT backbones."
+
+        model.eval()
+        model_instance = model
+        return model_instance
+    except Exception as e:
+        logging.error(f"[App] Failed to load model: {e}", exc_info=True)
+        model_status_info["loaded"] = False
+        model_status_info["message"] = f"Model loading note: {str(e)}"
+        return None
+
 
 DISEASE_PROFILES = {
     "Bacteria": {
@@ -325,72 +315,6 @@ DISEASE_PROFILES = {
     }
 }
 
-# Global model instance
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model_instance = None
-model_status_info = {
-    "loaded": False,
-    "device": str(device),
-    "model_type": "Hybrid EfficientNetV2B3 + ViT (Sinamenye et al., 2025)",
-    "weights_path": None,
-    "message": "Initializing..."
-}
-
-def load_or_init_model():
-    global model_instance, model_status_info
-    if model_instance is not None:
-        return model_instance
-
-    try:
-        logging.info("[App] Initializing EfficientNetV2B3ViT model...")
-        model = EfficientNetV2B3ViT(num_classes=len(CLASS_NAMES))
-        model.to(device)
-
-        if os.path.exists(BEST_MODEL_PATH):
-            logging.info(f"[App] Loading checkpoint from {BEST_MODEL_PATH}")
-            ckpt = torch.load(BEST_MODEL_PATH, map_location=device)
-            state_dict = ckpt["model_state_dict"] if "model_state_dict" in ckpt else ckpt
-            model.load_state_dict(state_dict)
-            model_status_info["weights_path"] = BEST_MODEL_PATH
-            model_status_info["loaded"] = True
-            model_status_info["message"] = "Trained model checkpoint loaded successfully."
-        else:
-            model_status_info["loaded"] = True
-            model_status_info["weights_path"] = "Pretrained Backbones (Zero-Shot / Base Features)"
-            model_status_info["message"] = "Model ready with pretrained EfficientNetV2B3 & ViT backbones."
-
-        model.eval()
-        model_instance = model
-        return model_instance
-    except Exception as e:
-        logging.error(f"[App] Failed to load model: {e}")
-        model_status_info["loaded"] = False
-        model_status_info["message"] = f"Model loading note: {str(e)}"
-        return None
-
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-
-@app.route("/api/health")
-def api_health():
-    model = load_or_init_model()
-    return jsonify({
-        "status": "healthy",
-        "device": str(device),
-        "cuda_available": torch.cuda.is_available(),
-        "model_loaded": model is not None,
-        "model_status": model_status_info,
-        "classes": CLASS_NAMES,
-        "dataset_available": os.path.exists(DATA_DIR),
-        "energy_threshold": DEFAULT_ENERGY_THRESHOLD,
-        "temperature": DEFAULT_TEMPERATURE,
-        "ood_method": "Energy-Based OOD (Sinamenye / Liu et al.)"
-    })
-
-
 # Curated high-accuracy in-distribution leaf specimens verified with deep hybrid model
 CURATED_CLASS_SAMPLES = {
     "Bacteria": [
@@ -400,10 +324,10 @@ CURATED_CLASS_SAMPLES = {
         "1692333631862.jpg",
     ],
     "Fungi": [
-        "20230712_150159.jpg",  # Conf: 91.9%, Energy: -1.552 (Concentric ring target-board lesions)
-        "20230712_123048.jpg",  # Conf: 90.3%, Energy: -2.342 (Alternaria early blight necrotic spots)
-        "1692334247280.jpg",    # Conf: 87.7%, Energy: -1.352 (Diagnostic foliar chlorosis)
-        "20230712_150155.jpg",  # Conf: 83.3%, Energy: -1.074 (Characteristic fungal foliar blight)
+        "20230712_150159.jpg",
+        "20230712_123048.jpg",
+        "1692334247280.jpg",
+        "20230712_150155.jpg",
     ],
     "Healthy": [
         "1692336758850.jpg",
@@ -412,10 +336,10 @@ CURATED_CLASS_SAMPLES = {
         "20230712_120306.jpg",
     ],
     "Nematode": [
-        "20230712_154713.jpg",  # Conf: 99.0%, Potato Sim: 98.4% (Clear root-knot foliar damage)
-        "20230712_154537.jpg",  # Conf: 98.4%, Energy: -2.139 (Severe interveinal chlorosis)
-        "20230712_122802.jpg",  # Conf: 98.2%, Energy: -1.710 (Typical nematode foliar symptom)
-        "20230712_153742.jpg",  # Conf: 92.1%, Energy: -2.478 (Cyst nematode vascular damage)
+        "20230712_154713.jpg",
+        "20230712_154537.jpg",
+        "20230712_122802.jpg",
+        "20230712_153742.jpg",
     ],
     "Pest": [
         "1692332350400.jpg",
@@ -424,10 +348,10 @@ CURATED_CLASS_SAMPLES = {
         "1692332350525.jpg",
     ],
     "Phytopthora": [
-        "20230712_155047.jpg",  # Conf: 95.4%, Energy: -1.310 (Late blight water-soaked lesion)
-        "20230712_154128.jpg",  # Conf: 89.2%, Energy: -0.887 (Phytophthora necrotic foliar margin)
-        "20230712_144044.jpg",  # Conf: 87.1%, Energy: -0.852 (Clear Phytophthora infestans symptom)
-        "20230712_154222.jpg",  # Conf: 67.4%, Energy: -0.484 (Active late blight spot)
+        "20230712_155047.jpg",
+        "20230712_154128.jpg",
+        "20230712_144044.jpg",
+        "20230712_154222.jpg",
     ],
     "Virus": [
         "1692335404669.jpg",
@@ -438,11 +362,39 @@ CURATED_CLASS_SAMPLES = {
 }
 
 
+@app.route("/")
+def index():
+    return render_template("index.html")
+
+
+@app.route("/api/health")
+def api_health():
+    model = load_or_init_model()
+    gatekeeper = get_gatekeeper()
+    return jsonify({
+        "status": "healthy",
+        "device": str(device),
+        "cuda_available": torch.cuda.is_available(),
+        "model_loaded": model is not None,
+        "model_status": model_status_info,
+        "classes": CLASS_NAMES,
+        "dataset_available": os.path.exists(DATA_DIR),
+        "energy_threshold": gatekeeper.energy_threshold,
+        "temperature": gatekeeper.temperature,
+        "ood_method": "Strict Two-Stage OOD Gatekeeper + Energy Scoring",
+        "features": {
+            "xai": ["CNN Grad-CAM", "ViT Attention Rollout", "Fused XAI"],
+            "fusion": "Squeeze-and-Excitation (SE) Gated Feature Fusion",
+            "differential_lr": "1e-5 backbone / 1e-4 head"
+        }
+    })
+
+
 @app.route("/api/samples")
 def api_samples():
     """
-    Returns curated, high-accuracy sample images from the potato dataset for each of the 7 classes.
-    Uses verified in-distribution specimens to ensure clean demonstration without misclassifications or false OOD rejections.
+    Returns curated valid potato leaf samples (all 7 classes)
+    AND diverse Non-Potato / Invalid Input test samples (PlantVillage & non-plant objects).
     """
     samples = []
     if os.path.exists(DATA_DIR):
@@ -450,9 +402,7 @@ def api_samples():
             folder = os.path.join(DATA_DIR, class_name)
             if os.path.isdir(folder):
                 curated_filenames = CURATED_CLASS_SAMPLES.get(class_name, [])
-                # Take curated files that exist on disk
                 selected = [f for f in curated_filenames if os.path.exists(os.path.join(folder, f))]
-                # If curated list has fewer than 4, fallback to first remaining files
                 if len(selected) < 4:
                     existing_set = set(selected)
                     remaining = [f for f in os.listdir(folder) if f.lower().endswith(('.jpg', '.jpeg', '.png')) and f not in existing_set]
@@ -464,11 +414,12 @@ def api_samples():
                         "class_name": class_name,
                         "filename": f,
                         "relative_path": rel_path,
-                        "url": f"/api/sample-image/{rel_path}"
+                        "url": f"/api/sample-image/{rel_path}",
+                        "is_ood": False
                     })
 
-    # Add curated non-potato test specimens across diverse crops and everyday objects (Out-of-Distribution / Non-Potato)
-    pv_dir = os.path.join(os.path.dirname(__file__), "PlantVillage")
+    # Add Non-Potato / Invalid Input samples to demonstrate OOD rejection live
+    pv_dir = os.path.join(BASE_DIR, "PlantVillage")
     if os.path.exists(pv_dir):
         pv_crops = [
             ("Tomato_Leaf_Mold", "Tomato Leaf (Non-Potato)", 1),
@@ -506,391 +457,297 @@ def api_samples():
 
 @app.route("/api/sample-image/<path:img_path>")
 def serve_sample_image(img_path):
-    """
-    Serves a sample image file from the dataset or PlantVillage.
-    """
     if img_path.startswith("PlantVillage/"):
         rel = img_path[len("PlantVillage/"):]
-        pv_dir = os.path.join(os.path.dirname(__file__), "PlantVillage")
+        pv_dir = os.path.join(BASE_DIR, "PlantVillage")
         safe_path = os.path.normpath(os.path.join(pv_dir, rel))
         if not safe_path.startswith(os.path.normpath(pv_dir)) or not os.path.exists(safe_path):
             return jsonify({"error": "Image not found"}), 404
         return send_from_directory(os.path.dirname(safe_path), os.path.basename(safe_path))
 
     safe_path = os.path.normpath(os.path.join(DATA_DIR, img_path))
-    # Security check: must be inside DATA_DIR
-    if not safe_path.startswith(os.path.normpath(DATA_DIR)):
-        return jsonify({"error": "Unauthorized path"}), 403
-
-    if not os.path.exists(safe_path):
+    if not safe_path.startswith(os.path.normpath(DATA_DIR)) or not os.path.exists(safe_path):
         return jsonify({"error": "Image not found"}), 404
 
-    directory = os.path.dirname(safe_path)
-    filename = os.path.basename(safe_path)
-    return send_from_directory(directory, filename)
-
-
-
-def process_image_and_predict(
-    image_obj,
-    true_class_hint=None,
-    energy_threshold=DEFAULT_ENERGY_THRESHOLD,
-    temperature=DEFAULT_TEMPERATURE
-):
-    """
-    Takes a PIL Image and runs inference through the hybrid model.
-    1. Extracts raw logits directly BEFORE Softmax.
-    2. Computes the non-Softmax Energy-Based OOD score:
-       Energy(x) = - T * logsumexp(logits / T).
-    3. Rejects out-of-distribution / invalid non-potato leaf inputs when Energy(x) > energy_threshold.
-    4. If specimen is valid, applies Softmax to the logits and outputs the top predicted class among the 7 categories as normal.
-    """
-    # Guard against flat, uninformative, solid or blank images
-    try:
-        rgb_img = image_obj.convert("RGB")
-        img_arr = np.array(rgb_img)
-        if float(np.std(img_arr)) < 8.0:
-            logging.warning("[OOD Guard] Flat/blank canvas with near-zero pixel variance detected.")
-            return {
-                "is_valid": False,
-                "is_ood": True,
-                "status": "out_of_distribution",
-                "error_message": "Invalid Image: Please upload a valid potato leaf image.",
-                "energy_score": 9.99,
-                "energy_threshold": round(energy_threshold, 4),
-                "confidence": 0.0,
-                "predicted_class": None,
-                "details": None,
-                "probabilities": None
-            }
-
-        # Botanical foliage presence check (organic chlorophyll/vegetation foliar content)
-        r = img_arr[:, :, 0].astype(float)
-        g = img_arr[:, :, 1].astype(float)
-        b = img_arr[:, :, 2].astype(float)
-        exg = 2 * g - r - b
-        foliage_mask = (exg > 5) | ((r > 60) & (g > 50) & (b < 100) & (r > b))
-        foliage_ratio = float(np.mean(foliage_mask))
-        if foliage_ratio < 0.08 and not true_class_hint:
-            logging.warning(f"[OOD Guard] Insufficient foliar vegetation ratio ({foliage_ratio:.3f} < 0.08). Non-potato image rejected.")
-            return {
-                "is_valid": False,
-                "is_ood": True,
-                "status": "out_of_distribution",
-                "error_message": "Invalid Image: Please upload a valid potato leaf image.",
-                "energy_score": 5.0,
-                "energy_threshold": round(energy_threshold, 4),
-                "confidence": 0.0,
-                "predicted_class": None,
-                "details": None,
-                "probabilities": None
-            }
-    except Exception as e:
-        logging.warning(f"[OOD Pre-check Warning]: {e}")
-
-    # -------------------------------------------------------------
-    # STAGE 1: Pre-trained Binary Classifier (Near-OOD Plant Filter)
-    # Fast evaluation to determine if input is Potato Leaf vs Other Crop Leaf (Tomato, Corn, Grape, Apple, etc.)
-    # -------------------------------------------------------------
-    filter_model = load_stage1_filter()
-    if filter_model is not None and not true_class_hint:
-        try:
-            from torchvision import transforms
-            filter_transform = transforms.Compose([
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-            t_input = filter_transform(rgb_img).unsqueeze(0)
-            with torch.no_grad():
-                f_logits = filter_model(t_input)
-                f_probs = F.softmax(f_logits, dim=1).squeeze().numpy()
-            potato_prob = float(f_probs[0])
-            non_potato_prob = float(f_probs[1])
-
-            logging.info(f"[Stage 1 Filter] Potato Prob: {potato_prob*100:.1f}%, Non-Potato Prob: {non_potato_prob*100:.1f}%")
-
-            # If input is classified as other plant / non-potato leaf
-            if potato_prob < 0.65 or non_potato_prob >= 0.35:
-                logging.warning(f"[Stage 1 Rejected] Input identified as other crop/non-potato plant (Non-Potato Prob: {non_potato_prob*100:.1f}%, Potato Prob: {potato_prob*100:.1f}%).")
-                return {
-                    "is_valid": False,
-                    "is_ood": True,
-                    "status": "out_of_distribution",
-                    "ood_type": "near_ood_other_crop",
-                    "ood_stage": "Stage 1 (Near-OOD Plant Filter)",
-                    "error_message": "Invalid Image: Please upload a valid potato leaf image.",
-                    "potato_prob": round(potato_prob * 100, 2),
-                    "non_potato_prob": round(non_potato_prob * 100, 2),
-                    "energy_score": 9.99,
-                    "energy_threshold": round(energy_threshold, 4),
-                    "confidence": 0.0,
-                    "predicted_class": None,
-                    "details": None,
-                    "probabilities": None
-                }
-        except Exception as e:
-            logging.warning(f"[Stage 1 Filter Exception]: {e}")
-
-    # -------------------------------------------------------------
-    # STAGE 2: Hybrid 7-Class Disease Model (EfficientNetV2B3 + ViT)
-    # -------------------------------------------------------------
-    model = load_or_init_model()
-
-    if get_transforms is not None:
-        transform = get_transforms(augment=False)
-    else:
-        from torchvision import transforms
-        transform = transforms.Compose([
-            transforms.Resize((256, 256)),
-            transforms.CenterCrop((224, 224)),
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
-
-    tensor = transform(image_obj.convert("RGB")).unsqueeze(0).to(device)
-
-    sim_p = 0.60
-    margin = 0.20
-
-    if model is not None:
-        with torch.no_grad():
-            # 1. Obtain hybrid feature representations
-            eff_f = model.effnet(tensor)
-            v_out = model.vit(tensor)
-            v_cls = v_out.last_hidden_state[:, 0, :]
-            v_proj = model.vit_linear(v_cls)
-            f = torch.cat([eff_f, v_proj], dim=1) # [1, 2048]
-
-            # 2. Raw logits directly BEFORE Softmax
-            logits = model.classifier(f)
-            # 3. Energy score: Energy(x) = - T * logsumexp(logits / T)
-            energy_score = compute_energy_score(logits, temperature=temperature)
-            # 4. Softmax probabilities computed for classification breakdown
-            raw_probs = F.softmax(logits, dim=1).cpu().squeeze().numpy()
-            probs = raw_probs
-
-            # 5. Domain Centroid Gate (Potato vs Non-Potato foliar embeddings)
-            centroids = load_ood_centroids()
-            if centroids is not None and not true_class_hint:
-                f_norm = F.normalize(f, p=2, dim=1).cpu()
-                p_cent = centroids["potato_centroid"].unsqueeze(0)
-                np_cent = centroids["non_potato_centroid"].unsqueeze(0)
-                sim_p = torch.matmul(f_norm, p_cent.t()).item()
-                sim_np = torch.matmul(f_norm, np_cent.t()).item()
-                margin = sim_p - sim_np
-
-        # If testing with dataset sample and classification head is untuned,
-        # blend with dataset class ground truth for crisp demonstration
-        if model_status_info.get("weights_path") != BEST_MODEL_PATH and true_class_hint in CLASS_NAMES:
-            target_idx = CLASS_NAMES.index(true_class_hint)
-            calibrated_probs = np.full(len(CLASS_NAMES), 0.02)
-            calibrated_probs[target_idx] = 0.88
-            var = (probs - probs.min()) / (probs.max() - probs.min() + 1e-6) * 0.08
-            calibrated_probs = calibrated_probs + var
-            probs = calibrated_probs / calibrated_probs.sum()
-    else:
-        # Fallback distribution
-        if true_class_hint in CLASS_NAMES:
-            target_idx = CLASS_NAMES.index(true_class_hint)
-            probs = [0.03] * len(CLASS_NAMES)
-            probs[target_idx] = 0.82
-            probs = np.array(probs)
-            probs = probs / probs.sum()
-            energy_score = -1.50
-        else:
-            probs = np.full(len(CLASS_NAMES), 1.0 / len(CLASS_NAMES))
-            energy_score = 0.0
-
-    # Multi-factor Out-of-Distribution (OOD) Decision Gate:
-    # 1. Feature similarity to potato foliage centroid must be >= 0.48
-    # 2. Similarity margin against non-potato foliage must be > 0.02
-    # 3. Energy score must not exceed energy_threshold
-    if true_class_hint:
-        is_ood = False
-    else:
-        is_ood = bool((sim_p < 0.48) or (margin < 0.02) or (energy_score > energy_threshold))
-
-    top_idx = int(np.argmax(probs))
-    confidence = float(probs[top_idx])
-
-    if is_ood:
-        logging.warning(
-            f"[OOD Rejected] Specimen rejected: sim_p={sim_p:.4f}, margin={margin:+.4f}, energy={energy_score:.4f} > threshold={energy_threshold:.4f}. Suppressing disease output."
-        )
-
-        return {
-            "is_valid": False,
-            "is_ood": True,
-            "status": "out_of_distribution",
-            "error_message": "Invalid Image: Please upload a valid potato leaf image.",
-            "energy_score": round(energy_score, 4),
-            "energy_threshold": round(energy_threshold, 4),
-            "potato_similarity": round(sim_p, 4),
-            "foliar_margin": round(margin, 4),
-            "confidence": round(confidence * 100, 2),
-            # Suppress 7-class disease output
-            "predicted_class": None,
-            "details": None,
-            "probabilities": None
-        }
-
-
-    # 2. In-distribution valid potato leaf prediction
-    predicted_class = CLASS_NAMES[top_idx]
-
-    prob_list = []
-    for name, p in zip(CLASS_NAMES, probs):
-        prob_list.append({
-            "class": name,
-            "probability": round(float(p) * 100, 2)
-        })
-    prob_list.sort(key=lambda x: x["probability"], reverse=True)
-
-    details = DISEASE_PROFILES.get(predicted_class, DISEASE_PROFILES["Healthy"])
-
-    return {
-        "is_valid": True,
-        "is_ood": False,
-        "status": "success",
-        "predicted_class": predicted_class,
-        "confidence": round(confidence * 100, 2),
-        "energy_score": round(energy_score, 4),
-        "energy_threshold": round(energy_threshold, 4),
-        "probabilities": prob_list,
-        "details": details
-    }
+    return send_from_directory(os.path.dirname(safe_path), os.path.basename(safe_path))
 
 
 @app.route("/api/predict", methods=["POST"])
 def api_predict():
     """
-    Handles image upload or sample path selection with Energy-Based OOD detection.
+    Handles image prediction with strict two-stage OOD gatekeeper and XAI explanations.
     """
     try:
         sample_path = None
         raw_threshold = None
         raw_temperature = None
+        alpha = 0.5
+
         if request.is_json:
             payload = request.get_json(silent=True) or {}
             sample_path = payload.get("sample_path")
             raw_threshold = payload.get("energy_threshold") if payload.get("energy_threshold") is not None else payload.get("threshold")
             raw_temperature = payload.get("temperature")
+            alpha = float(payload.get("alpha", 0.5))
         if not sample_path:
             sample_path = request.form.get("sample_path")
         if raw_threshold is None:
             raw_threshold = request.form.get("energy_threshold") or request.form.get("threshold")
         if raw_temperature is None:
             raw_temperature = request.form.get("temperature")
+        if "alpha" in request.form:
+            try:
+                alpha = float(request.form.get("alpha"))
+            except Exception:
+                alpha = 0.5
+
+        gatekeeper = get_gatekeeper()
+        xai = get_xai()
+        model = load_or_init_model()
 
         try:
-            energy_threshold = float(raw_threshold) if raw_threshold is not None else DEFAULT_ENERGY_THRESHOLD
-            energy_threshold = max(-2.0, min(2.5, energy_threshold))
+            energy_threshold = float(raw_threshold) if raw_threshold is not None else gatekeeper.energy_threshold
         except (ValueError, TypeError):
-            energy_threshold = DEFAULT_ENERGY_THRESHOLD
+            energy_threshold = gatekeeper.energy_threshold
 
         try:
-            temperature = float(raw_temperature) if raw_temperature is not None else DEFAULT_TEMPERATURE
-            temperature = max(0.1, min(5.0, temperature))
+            temperature = float(raw_temperature) if raw_temperature is not None else gatekeeper.temperature
         except (ValueError, TypeError):
-            temperature = DEFAULT_TEMPERATURE
+            temperature = gatekeeper.temperature
 
-        true_hint = None
+        is_curated_potato = False
+        image = None
 
         if sample_path:
             if sample_path.startswith("PlantVillage/"):
-                pv_dir = os.path.join(os.path.dirname(__file__), "PlantVillage")
+                pv_dir = os.path.join(BASE_DIR, "PlantVillage")
                 rel = sample_path[len("PlantVillage/"):]
                 full_path = os.path.normpath(os.path.join(pv_dir, rel))
                 if not full_path.startswith(os.path.normpath(pv_dir)) or not os.path.exists(full_path):
                     return jsonify({"error": "Invalid sample image path"}), 400
-                true_hint = None  # Non-potato sample: must undergo strict OOD safety evaluation
+                is_curated_potato = False  # Strict OOD test
             else:
-                # Load from sample dataset
                 full_path = os.path.normpath(os.path.join(DATA_DIR, sample_path))
                 if not full_path.startswith(os.path.normpath(DATA_DIR)) or not os.path.exists(full_path):
                     return jsonify({"error": "Invalid sample image path"}), 400
-                
-                # Ground truth class from folder name
                 folder_name = sample_path.replace("\\", "/").split("/")[0]
                 if folder_name in CLASS_NAMES:
-                    true_hint = folder_name
+                    is_curated_potato = True
 
+            image = Image.open(full_path).convert("RGB")
+        else:
+            if "file" not in request.files:
+                return jsonify({"error": "No file uploaded or sample selected"}), 400
+            file = request.files["file"]
+            if file.filename == "":
+                return jsonify({"error": "Empty filename provided"}), 400
+            image = Image.open(io.BytesIO(file.read())).convert("RGB")
 
-            image = Image.open(full_path)
-            result = process_image_and_predict(
-                image,
-                true_class_hint=true_hint,
-                energy_threshold=energy_threshold,
-                temperature=temperature
-            )
-            result["source"] = "dataset_sample"
-            result["sample_name"] = os.path.basename(sample_path)
-            return jsonify(result)
+        # Transform image for model input
+        transform = get_transforms(augment=False)
+        tensor = transform(image).unsqueeze(0).to(device)
 
-        if "file" not in request.files:
-            return jsonify({"error": "No file uploaded or sample selected"}), 400
-
-        file = request.files["file"]
-        if file.filename == "":
-            return jsonify({"error": "Empty filename provided"}), 400
-
-        image = Image.open(io.BytesIO(file.read()))
-        result = process_image_and_predict(
-            image,
+        # -------------------------------------------------------------
+        # STEP 1: Strict Two-Stage Out-of-Distribution (OOD) Gatekeeper
+        # -------------------------------------------------------------
+        gate_result = gatekeeper.validate_and_gate(
+            image_pil=image,
+            hybrid_model=model,
+            tensor=tensor,
             energy_threshold=energy_threshold,
-            temperature=temperature
+            temperature=temperature,
+            is_curated_sample=is_curated_potato,
         )
-        result["source"] = "uploaded_file"
-        result["filename"] = file.filename
-        return jsonify(result)
+
+        if not gate_result["is_valid"]:
+            # Immediately halt disease prediction and return INVALID_INPUT
+            diag = gate_result.get("diagnostic", {})
+            return jsonify({
+                "is_valid": False,
+                "is_ood": True,
+                "status": "INVALID_INPUT",
+                "error_message": gate_result.get("error_message", EXACT_INVALID_INPUT_MESSAGE),
+                "rejection_stage": gate_result.get("rejection_stage"),
+                "rejection_reason": gate_result.get("rejection_reason"),
+                "energy_score": diag.get("energy_score"),
+                "energy_threshold": diag.get("energy_threshold"),
+                "potato_similarity": diag.get("potato_similarity"),
+                "foliar_margin": diag.get("foliar_margin"),
+                "diagnostic": diag,
+                "predicted_class": None,
+                "probabilities": None,
+                "details": None,
+                "xai": None,
+                "source": "dataset_sample" if sample_path else "uploaded_file"
+            })
+
+        # -------------------------------------------------------------
+        # STEP 2: In-Distribution Disease Classification & Feature Fusion
+        # -------------------------------------------------------------
+        logits = gate_result.get("logits")
+        if logits is None:
+            with torch.no_grad():
+                logits = model(tensor)
+
+        probs = F.softmax(logits, dim=-1).cpu().squeeze().numpy()
+        modality_weights = model.get_modality_weights(tensor)
+
+        top_idx = int(np.argmax(probs))
+        predicted_class = CLASS_NAMES[top_idx]
+        confidence = float(probs[top_idx])
+        energy_score = gate_result.get("energy_score", 0.0)
+
+        # Build probabilities list
+        prob_list = []
+        for name, p in zip(CLASS_NAMES, probs):
+            prob_list.append({
+                "class": name,
+                "probability": round(float(p) * 100, 2)
+            })
+        prob_list.sort(key=lambda x: x["probability"], reverse=True)
+
+        # Check for Pest vs. Fungi overlap disambiguation note
+        pest_idx = CLASS_NAMES.index("Pest")
+        fungi_idx = CLASS_NAMES.index("Fungi")
+        disambiguation_note = None
+        if predicted_class in ["Pest", "Fungi"] and abs(probs[pest_idx] - probs[fungi_idx]) < 0.25:
+            disambiguation_note = (
+                f"SE-Gate Disambiguation Active: Weighted local EfficientNetV2-B3 lesion textures "
+                f"({modality_weights['cnn_pct']}%) against global ViT chlorosis ({modality_weights['vit_pct']}%) "
+                f"to resolve Pest vs. Fungi foliar overlap."
+            )
+
+        details = DISEASE_PROFILES.get(predicted_class, DISEASE_PROFILES["Healthy"])
+
+        # -------------------------------------------------------------
+        # STEP 3: Explainable AI Suite (Grad-CAM, ViT Rollout, Fused)
+        # -------------------------------------------------------------
+        try:
+            xai_data = xai.explain(
+                model=model,
+                tensor=tensor,
+                image_pil=image,
+                target_class=top_idx,
+                alpha=alpha,
+            )
+        except Exception as e:
+            logging.warning(f"[App] XAI generation note: {e}")
+            xai_data = None
+
+        return jsonify({
+            "is_valid": True,
+            "is_ood": False,
+            "status": "VALID_POTATO_LEAF",
+            "predicted_class": predicted_class,
+            "confidence": round(confidence * 100, 2),
+            "energy_score": round(energy_score, 4),
+            "energy_threshold": round(energy_threshold, 4),
+            "potato_similarity": gate_result.get("potato_similarity"),
+            "foliar_margin": gate_result.get("foliar_margin"),
+            "modality_weights": modality_weights,
+            "disambiguation_note": disambiguation_note,
+            "probabilities": prob_list,
+            "details": details,
+            "xai": xai_data,
+            "source": "dataset_sample" if sample_path else "uploaded_file"
+        })
 
     except Exception as e:
         logging.error(f"[App] Prediction error: {e}", exc_info=True)
         return jsonify({"error": f"Inference error: {str(e)}"}), 500
 
 
+@app.route("/api/xai", methods=["POST"])
+def api_xai():
+    """
+    Regenerates XAI overlays with updated opacity or target class.
+    """
+    try:
+        payload = request.get_json(silent=True) or {}
+        sample_path = payload.get("sample_path")
+        alpha = float(payload.get("alpha", 0.5))
+        target_class_name = payload.get("target_class")
+
+        target_class = None
+        if target_class_name in CLASS_NAMES:
+            target_class = CLASS_NAMES.index(target_class_name)
+
+        if not sample_path:
+            return jsonify({"error": "No image specified for XAI"}), 400
+
+        if sample_path.startswith("PlantVillage/"):
+            pv_dir = os.path.join(BASE_DIR, "PlantVillage")
+            rel = sample_path[len("PlantVillage/"):]
+            full_path = os.path.normpath(os.path.join(pv_dir, rel))
+        else:
+            full_path = os.path.normpath(os.path.join(DATA_DIR, sample_path))
+
+        if not os.path.exists(full_path):
+            return jsonify({"error": "Image file not found"}), 404
+
+        image = Image.open(full_path).convert("RGB")
+        model = load_or_init_model()
+        xai = get_xai()
+
+        transform = get_transforms(augment=False)
+        tensor = transform(image).unsqueeze(0).to(device)
+
+        xai_data = xai.explain(
+            model=model,
+            tensor=tensor,
+            image_pil=image,
+            target_class=target_class,
+            alpha=alpha,
+        )
+        return jsonify(xai_data)
+
+    except Exception as e:
+        logging.error(f"[App] XAI error: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/architecture")
 def api_architecture():
     """
-    Returns paper specifications and model architecture details.
+    Returns paper specifications and enhanced architecture details.
     """
     return jsonify({
         "paper_title": "Potato plant disease detection: leveraging hybrid deep learning models",
         "authors": "Sinamenye et al., 2025",
         "journal": "BMC Plant Biology",
+        "doi": "10.1186/s12870-025-06679-4",
         "architecture": {
             "branch_cnn": {
                 "name": "EfficientNetV2B3",
-                "weights": "ImageNet-21k (Frozen)",
-                "role": "Local spatial representation & texture extraction",
-                "output_vector_dim": 1536
+                "weights": "ImageNet-21k",
+                "role": "Local spatial representation & lesion texture extraction",
+                "output_vector_dim": 1536,
+                "xai": "CNN Grad-CAM on conv_head"
             },
             "branch_vit": {
                 "name": "ViT-Base (patch 16x16, input 224x224)",
-                "weights": "ImageNet-21k (Frozen)",
-                "role": "Global long-range contextual attention via CLS token",
+                "weights": "ImageNet-21k",
+                "role": "Global long-range attention & whole-leaf context",
                 "cls_dim": 768,
-                "projected_dim": 512
+                "projected_dim": 512,
+                "xai": "Attention Rollout across all 12 transformer layers"
             },
-            "fusion": {
-                "operation": "Vector Concatenation (Local 1536-d + Global 512-d)",
+            "feature_fusion": {
+                "type": "Squeeze-and-Excitation (SE) Gated Feature Fusion",
+                "operation": "Dynamic modality-weighted concatenation [2 * w_cnn * cnn, 2 * w_vit * vit]",
                 "fused_dimension": 2048,
-                "regularization": "Dropout (rate = 0.2)"
+                "bottleneck_reduction": 8,
+                "modality_monitoring": "Real-time CNN % vs. ViT % weight split"
             },
-            "classification_head": {
-                "layer": "Dense Linear Layer (2048 -> 7 classes)",
-                "activation": "Softmax",
-                "loss": "Cross-Entropy Loss"
+            "ood_gatekeeper": {
+                "stage_1": "Lightweight MobileNetV3 Cosine Classifier (Potato vs Non-Potato Crops)",
+                "stage_2": "Domain Centroid Distance & Energy-Based Free Energy Scoring E(x) = -T*logsumexp(z/T)",
+                "rejection_action": "Immediately halts prediction and returns INVALID_INPUT status"
+            },
+            "imbalance_mitigation": {
+                "methods": ["Class-Weighted Loss / Focal Loss", "Stratified WeightedRandomSampler"],
+                "target_minority_classes": "Nematode (2.2%) and Healthy (6.5%)"
             }
-        },
-        "hyperparameters": {
-            "input_resolution": "256x256 resized, 224x224 crop",
-            "batch_size": 64,
-            "epochs": 70,
-            "optimizer": "Adam (lr = 1e-4)",
-            "lr_scheduler": "ReduceLROnPlateau (factor=0.5, patience=5)",
-            "split_ratio": "80% Train | 10% Validation | 10% Test (Stratified)"
         },
         "target_classes": CLASS_NAMES
     })
@@ -898,7 +755,7 @@ def api_architecture():
 
 @app.route("/api/metrics")
 def api_metrics():
-    report_path = os.path.join(os.path.dirname(__file__), "evaluation_report.json")
+    report_path = os.path.join(BASE_DIR, "evaluation_report.json")
     if os.path.exists(report_path):
         with open(report_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -908,7 +765,7 @@ def api_metrics():
 
 @app.route("/api/metrics-plot")
 def api_metrics_plot():
-    plot_path = os.path.join(os.path.dirname(__file__), "evaluation_metrics.png")
+    plot_path = os.path.join(BASE_DIR, "evaluation_metrics.png")
     if os.path.exists(plot_path):
         return send_file(plot_path, mimetype="image/png")
     return jsonify({"error": "Plot not found"}), 404
@@ -916,7 +773,7 @@ def api_metrics_plot():
 
 @app.route("/api/confusion-matrix-plot")
 def api_cm_plot():
-    cm_path = os.path.join(os.path.dirname(__file__), "confusion_matrix.png")
+    cm_path = os.path.join(BASE_DIR, "confusion_matrix.png")
     if os.path.exists(cm_path):
         return send_file(cm_path, mimetype="image/png")
     return jsonify({"error": "Confusion matrix plot not found"}), 404
@@ -924,18 +781,16 @@ def api_cm_plot():
 
 if __name__ == "__main__":
     import sys
-    import numpy as np
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
-    print("=" * 70)
-    print("[Potato Plant Disease Detection Web Application]")
-    print("   Hybrid Architecture: EfficientNetV2B3 + ViT (Sinamenye et al., 2025)")
+    print("=" * 75)
+    print("[Enhanced Potato Plant Disease Diagnostic Suite]")
+    print("   Architecture: Enhanced Hybrid EfficientNetV2-B3 + ViT (Sinamenye et al., 2025)")
     print(f"   Compute Device: {device}")
+    print(f"   Features: SE-Gated Fusion | OOD Gatekeeper | Grad-CAM & ViT Rollout XAI")
     print("   Starting local server at http://127.0.0.1:5000")
-    print("=" * 70)
+    print("=" * 75)
     app.run(host="127.0.0.1", port=5000, debug=False)
-

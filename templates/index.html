@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AgriVision AI | Potato Leaf Disease Diagnostic System</title>
+    <title>AgriVision AI | Potato Leaf Pathology & XAI Diagnostic Suite</title>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
     <!-- FontAwesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/static/styles.css">
@@ -27,7 +27,7 @@
                 </div>
                 <div class="brand-text">
                     <div class="brand-title">AgriVision <span>AI</span></div>
-                    <div class="brand-subtitle">Potato Pathology & Disease Diagnostic Suite</div>
+                    <div class="brand-subtitle">Enhanced Hybrid Deep Learning Diagnostic Suite &bull; Sinamenye et al. 2025</div>
                 </div>
             </div>
 
@@ -39,7 +39,11 @@
                 </div>
                 <div class="status-badge model-badge" id="modelBadge" title="Hybrid Architecture">
                     <i class="fa-solid fa-network-wired"></i>
-                    <span>EfficientNetV2B3 + ViT</span>
+                    <span>EfficientNetV2B3 + ViT (SE-Gated)</span>
+                </div>
+                <div class="status-badge ood-badge" title="Input Gatekeeper">
+                    <i class="fa-solid fa-shield-halved" style="color: #10b981;"></i>
+                    <span>OOD Gatekeeper Active</span>
                 </div>
                 <button class="nav-btn" id="openArchModalBtn">
                     <i class="fa-solid fa-circle-nodes"></i> Model Architecture
@@ -56,8 +60,8 @@
                 <i class="fa-solid fa-triangle-exclamation"></i>
             </div>
             <div class="alert-banner-text">
-                <strong id="globalAlertTitle">Incorrect Input:</strong>
-                <span id="globalAlertMessage">Please upload a valid, clear image of a potato leaf.</span>
+                <strong id="globalAlertTitle">Invalid Input:</strong>
+                <span id="globalAlertMessage">The uploaded image is not recognized as a valid potato leaf specimen. Please upload a clear image of a potato leaf.</span>
             </div>
             <button class="alert-banner-close" id="closeAlertBannerBtn" title="Dismiss">
                 <i class="fa-solid fa-xmark"></i>
@@ -72,7 +76,6 @@
                     <h2><i class="fa-solid fa-camera"></i> Leaf Specimen Input</h2>
                     <span class="badge-pill">RGB 224x224</span>
                 </div>
-
 
                 <!-- Dropzone Area -->
                 <div class="dropzone" id="dropzone">
@@ -95,6 +98,56 @@
                         <button class="remove-img-btn" id="removeImgBtn" title="Remove image">
                             <i class="fa-solid fa-xmark"></i>
                         </button>
+                    </div>
+                </div>
+
+                <!-- Explainable AI (XAI) Layer Switcher & Modality Weight Bar -->
+                <div class="xai-controls-card hidden" id="xaiControlsCard">
+                    <div class="xai-header">
+                        <span class="xai-title"><i class="fa-solid fa-layer-group"></i> Explainable AI (XAI) Layer</span>
+                        <span class="xai-badge" id="xaiActiveBadge">Original RGB</span>
+                    </div>
+
+                    <!-- Toggle Pills -->
+                    <div class="xai-layer-pills" id="xaiPills">
+                        <button class="xai-pill active" data-layer="original">
+                            <i class="fa-solid fa-image"></i> Original RGB
+                        </button>
+                        <button class="xai-pill" data-layer="gradcam">
+                            <i class="fa-solid fa-bullseye"></i> CNN Grad-CAM
+                        </button>
+                        <button class="xai-pill" data-layer="rollout">
+                            <i class="fa-solid fa-network-wired"></i> ViT Rollout
+                        </button>
+                        <button class="xai-pill" data-layer="fused">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i> Fused XAI
+                        </button>
+                    </div>
+
+                    <!-- Interactive Opacity Slider -->
+                    <div class="xai-opacity-row">
+                        <span class="opacity-label"><i class="fa-solid fa-sliders"></i> Overlay Opacity:</span>
+                        <input type="range" min="10" max="100" value="50" class="opacity-slider" id="opacitySlider">
+                        <span class="opacity-val" id="opacityVal">50%</span>
+                    </div>
+
+                    <!-- Live SE-Gate Modality Weight Bar -->
+                    <div class="modality-weight-section" id="modalitySection">
+                        <div class="modality-header">
+                            <span><i class="fa-solid fa-scale-balanced"></i> SE-Gate Dynamic Modality Weight</span>
+                            <span class="modality-legend">
+                                <span class="legend-dot cnn-dot"></span> CNN: <strong id="cnnWeightText">50.0%</strong>
+                                <span class="legend-dot vit-dot" style="margin-left: 10px;"></span> ViT: <strong id="vitWeightText">50.0%</strong>
+                            </span>
+                        </div>
+                        <div class="modality-bar-track">
+                            <div class="modality-bar-cnn" id="modalityCnnBar" style="width: 50%;"></div>
+                            <div class="modality-bar-vit" id="modalityVitBar" style="width: 50%;"></div>
+                        </div>
+                        <div class="modality-subtext">
+                            <span><i class="fa-solid fa-microscope"></i> EfficientNetV2-B3 (Local Lesion Focus)</span>
+                            <span><i class="fa-solid fa-globe"></i> ViT-Base (Global Canopy Context)</span>
+                        </div>
                     </div>
                 </div>
 
@@ -124,7 +177,6 @@
                         <button class="chip chip-ood" data-class="Non-Potato (OOD)"><i class="fa-solid fa-shield-halved"></i> Non-Potato (OOD Test)</button>
                     </div>
 
-
                     <!-- Sample thumbnails grid -->
                     <div class="sample-grid" id="sampleGrid">
                         <!-- Loaded dynamically via JavaScript -->
@@ -142,9 +194,10 @@
                     <h3>Awaiting Leaf Specimen</h3>
                     <p>Upload a photograph of a potato leaf or click one of the dataset sample specimens to trigger the dual-backbone diagnostic engine.</p>
                     <div class="feature-tags">
+                        <span><i class="fa-solid fa-shield-halved"></i> Strict OOD Gatekeeper</span>
                         <span><i class="fa-solid fa-check"></i> 7 Disease Classes</span>
-                        <span><i class="fa-solid fa-check"></i> Sinamenye et al. 2025</span>
-                        <span><i class="fa-solid fa-check"></i> Agronomic Treatment</span>
+                        <span><i class="fa-solid fa-eye"></i> Grad-CAM & ViT Rollout</span>
+                        <span><i class="fa-solid fa-scale-balanced"></i> SE-Gate Fusion</span>
                     </div>
                 </div>
 
@@ -153,15 +206,16 @@
                     <div class="pulsing-leaf">
                         <i class="fa-solid fa-dna"></i>
                     </div>
-                    <h3>Extracting Multimodal Visual Features</h3>
+                    <h3>Validating Specimen & Extracting Features</h3>
                     <div class="step-tracker">
-                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> CNN Local Feature Map (GAP 1536-d)</div>
-                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> ViT Patch CLS Attention (512-d)</div>
-                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> 2048-d Feature Concatenation & Logits</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> Stage 1: Potato vs Non-Potato Gatekeeper</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> Stage 2: Mahalanobis / Cosine Centroid & Energy Check</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> SE-Gated Feature Fusion & 7-Class Logits</div>
+                        <div class="step-item active"><i class="fa-solid fa-circle-check"></i> Grad-CAM & ViT Attention Rollout Synthesis</div>
                     </div>
                 </div>
 
-                <!-- Invalid Image Alert State -->
+                <!-- Invalid Image Alert State (Out-of-Distribution / Non-Potato) -->
                 <div class="ood-alert-wrapper hidden" id="oodAlertWrapper">
                     <div class="ood-card invalid-alert-card">
                         <div class="ood-card-glow"></div>
@@ -169,8 +223,38 @@
                             <div class="invalid-alert-icon">
                                 <i class="fa-solid fa-triangle-exclamation"></i>
                             </div>
-                            <h2 class="invalid-alert-heading">Invalid Image</h2>
-                            <p class="ood-title" id="oodTitle">Please upload a valid potato leaf image.</p>
+                            <div class="invalid-status-badge">
+                                <i class="fa-solid fa-ban"></i> OUT-OF-DISTRIBUTION DETECTED
+                            </div>
+                            <h2 class="invalid-alert-heading">Invalid Input Specimen</h2>
+                            <p class="ood-title" id="oodTitle">Invalid Input: The uploaded image is not recognized as a valid potato leaf specimen. Please upload a clear image of a potato leaf.</p>
+
+                            <!-- Detailed diagnostic box -->
+                            <div class="ood-diagnostic-box" id="oodDiagnosticBox">
+                                <div class="diag-header"><i class="fa-solid fa-microscope"></i> Gatekeeper Rejection Diagnostics</div>
+                                <div class="diag-grid">
+                                    <div class="diag-item">
+                                        <span class="diag-label">Rejection Stage</span>
+                                        <span class="diag-val" id="diagStage">Stage 1 Gatekeeper</span>
+                                    </div>
+                                    <div class="diag-item">
+                                        <span class="diag-label">Energy Score</span>
+                                        <span class="diag-val diag-fail" id="diagEnergy">+8.50 (Max: +0.50)</span>
+                                    </div>
+                                    <div class="diag-item">
+                                        <span class="diag-label">Potato Similarity</span>
+                                        <span class="diag-val diag-fail" id="diagSim">0.28 (Min: 0.48)</span>
+                                    </div>
+                                    <div class="diag-item">
+                                        <span class="diag-label">Primary Reason</span>
+                                        <span class="diag-val" id="diagReason">Non-Potato Crop Detected</span>
+                                    </div>
+                                </div>
+                                <div class="diag-note">
+                                    <i class="fa-solid fa-shield-halved"></i> 7-Class disease prediction has been halted to prevent false positive diagnosis.
+                                </div>
+                            </div>
+
                             <div class="ood-actions">
                                 <button class="btn btn-primary" id="oodTryAgainBtn">
                                     <i class="fa-solid fa-cloud-arrow-up"></i> Upload Another Specimen
@@ -180,16 +264,19 @@
                     </div>
                 </div>
 
-                <!-- Full Diagnostic Result Display -->
+                <!-- Full Diagnostic Result Display for Valid Specimen -->
                 <div class="diagnosis-wrapper hidden" id="diagnosisWrapper">
                     <!-- Top Summary Card -->
                     <div class="diagnostic-summary-card">
                         <div class="summary-top">
                             <div>
-                                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                                <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
                                     <span class="severity-tag" id="resSeverity">Critical</span>
                                     <span class="badge-pill" id="resEnergyBadge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.75rem; padding: 3px 8px;">
                                         <i class="fa-solid fa-circle-check"></i> In-Distribution (Energy: <span id="resEnergyScore">-1.15</span>)
+                                    </span>
+                                    <span class="badge-pill" id="resSimBadge" style="background: rgba(56, 189, 248, 0.15); color: #38bdf8; border: 1px solid rgba(56, 189, 248, 0.3); font-size: 0.75rem; padding: 3px 8px;">
+                                        <i class="fa-solid fa-fingerprint"></i> Potato Sim: <span id="resSimScore">85.4%</span>
                                     </span>
                                 </div>
                                 <h2 class="res-title" id="resTitle">Late Blight (Phytophthora)</h2>
@@ -201,6 +288,12 @@
                                     <span class="conf-lbl">Confidence</span>
                                 </div>
                             </div>
+                        </div>
+
+                        <!-- Pest vs Fungi Disambiguation Alert -->
+                        <div class="disambiguation-alert hidden" id="disambiguationBox">
+                            <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            <span id="disambiguationText"></span>
                         </div>
 
                         <p class="summary-desc" id="resSummary">
@@ -263,13 +356,13 @@
                 <div class="modal-header">
                     <div class="modal-title">
                         <i class="fa-solid fa-circle-nodes"></i>
-                        <span>Hybrid EfficientNetV2B3 + ViT Pipeline Architecture</span>
+                        <span>Enhanced Hybrid EfficientNetV2B3 + ViT Pipeline Architecture</span>
                     </div>
                     <button class="modal-close-btn" id="closeArchModalBtn"><i class="fa-solid fa-xmark"></i></button>
                 </div>
                 <div class="modal-body">
                     <p class="modal-paper-cite">
-                        Based on Sinamenye et al. (2025), <em>"Potato plant disease detection: leveraging hybrid deep learning models"</em>, BMC Plant Biology.
+                        Based on Sinamenye et al. (2025), <em>"Potato plant disease detection: leveraging hybrid deep learning models"</em>, BMC Plant Biology (DOI: 10.1186/s12870-025-06679-4).
                     </p>
 
                     <div class="arch-diagram">
@@ -282,11 +375,11 @@
                                 <div class="branch-tag cnn-tag">CNN Branch (Local)</div>
                                 <div class="arch-box">
                                     <strong>EfficientNetV2B3</strong>
-                                    <span>Pre-trained ImageNet-21k (Frozen)</span>
+                                    <span>Pre-trained ImageNet-21k &bull; conv_head Grad-CAM</span>
                                 </div>
                                 <div class="arch-arrow">&darr;</div>
                                 <div class="arch-box">
-                                    <strong>GAP Flatten</strong>
+                                    <strong>GAP Spatial Pooling</strong>
                                     <span>Vector Dim: 1536</span>
                                 </div>
                             </div>
@@ -294,7 +387,7 @@
                                 <div class="branch-tag vit-tag">ViT Branch (Global)</div>
                                 <div class="arch-box">
                                     <strong>ViT-Base (16&times;16 patch)</strong>
-                                    <span>Pre-trained ImageNet-21k (Frozen)</span>
+                                    <span>Pre-trained ImageNet-21k &bull; 12-Layer Attention Rollout</span>
                                 </div>
                                 <div class="arch-arrow">&darr;</div>
                                 <div class="arch-box">
@@ -303,10 +396,10 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="arch-arrow">&darr; Concatenation &darr;</div>
+                        <div class="arch-arrow">&darr; SE-Gated Feature Fusion &darr;</div>
                         <div class="arch-node fusion-node">
-                            <strong>Dual-Path Concatenation Layer</strong>
-                            <span>1536 (Local) + 512 (Global) = 2048 Dimensions</span>
+                            <strong>Squeeze-and-Excitation (SE) Modality Gating</strong>
+                            <span>Dynamic Weighting: [2&middot;w_cnn&middot;Local (1536) + 2&middot;w_vit&middot;Global (512)] = 2048 Dim</span>
                         </div>
                         <div class="arch-arrow">&darr;</div>
                         <div class="arch-node head-node">
@@ -321,16 +414,16 @@
                             <span class="param-val">7 Classes</span>
                         </div>
                         <div class="param-box">
-                            <span class="param-label">Augmentation</span>
-                            <span class="param-val">Affine, ColorJitter, Flips</span>
+                            <span class="param-label">Loss Function</span>
+                            <span class="param-val">Class-Weighted / Focal Loss</span>
                         </div>
                         <div class="param-box">
-                            <span class="param-label">Optimizer</span>
-                            <span class="param-val">Adam (lr = 1e-4)</span>
+                            <span class="param-label">Imbalance Sampler</span>
+                            <span class="param-val">Stratified WeightedRandomSampler</span>
                         </div>
                         <div class="param-box">
-                            <span class="param-label">Scheduler</span>
-                            <span class="param-val">ReduceLROnPlateau</span>
+                            <span class="param-label">Differential LR</span>
+                            <span class="param-val">1e-5 (Backbones) / 1e-4 (Head)</span>
                         </div>
                     </div>
                 </div>

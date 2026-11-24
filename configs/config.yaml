@@ -1,0 +1,82 @@
+# Configuration for Enhanced Potato Leaf Disease Detection
+# Based on Sinamenye et al. (2025), BMC Plant Biology
+# "Potato plant disease detection: leveraging hybrid deep learning models"
+
+model:
+  name: "EnhancedHybridEfficientNetViT"
+  num_classes: 7
+  effnet_model_name: "tf_efficientnetv2_b3.in21k"
+  vit_model_name: "google/vit-base-patch16-224-in21k"
+  effnet_embed_dim: 1536
+  vit_embed_dim: 512
+  fused_dim: 2048
+  dropout_rate: 0.2
+  use_se_gating: true
+  se_reduction: 8
+  freeze_backbone: true
+  unfreeze_top_blocks: false  # When true, unfreezes conv_head/blocks[-1] and ViT top 2 layers for fine-tuning
+
+ood_detection:
+  energy_threshold: 0.50
+  temperature: 1.0
+  min_confidence_threshold: 0.40
+  sim_threshold: 0.48
+  margin_threshold: 0.02
+  stage1_potato_prob_threshold: 0.65
+  stage1_non_potato_prob_threshold: 0.35
+  min_foliage_ratio: 0.08
+  min_pixel_std: 8.0
+  exact_user_message: "Invalid Input: The uploaded image is not recognized as a valid potato leaf specimen. Please upload a clear image of a potato leaf."
+
+dataset:
+  data_dir: "data/potatodata/Potato Leaf Disease Dataset in Uncontrolled Environment"
+  class_names:
+    - "Bacteria"
+    - "Fungi"
+    - "Healthy"
+    - "Nematode"
+    - "Pest"
+    - "Phytopthora"
+    - "Virus"
+  image_size: 224
+  resize_size: 256
+  # Augmentation hyperparameters matching Sinamenye et al. (2025)
+  augmentation:
+    crop_scale: [0.95, 1.05]
+    crop_ratio: [0.75, 1.33]
+    rotation_degrees: [-40, 40]
+    color_jitter_saturation: 0.8
+    color_jitter_hue: 0.021
+    affine_translation: [0.13, 0.13]
+    affine_scale: [0.8, 1.2]
+  normalization:
+    mean: [0.485, 0.456, 0.406]
+    std: [0.229, 0.224, 0.225]
+
+training:
+  batch_size: 64
+  epochs: 70
+  learning_rate: 0.0001
+  backbone_learning_rate: 0.00001  # Differential lr for unfrozen backbone stages
+  weight_decay: 0.00001
+  loss_type: "focal"  # Options: "cross_entropy", "weighted_ce", "focal"
+  focal_gamma: 2.0
+  use_weighted_sampler: true  # Stratified WeightedRandomSampler for class imbalance (Nematode 2.2%, Healthy 6.5%)
+  lr_scheduler:
+    type: "ReduceLROnPlateau"
+    mode: "min"
+    factor: 0.5
+    patience: 5
+    min_lr: 0.000001
+  splits:
+    train: 0.80
+    val: 0.10
+    test: 0.10
+    random_state: 42
+
+xai:
+  gradcam_target_layer: "conv_head"
+  vit_attention_fusion: "mean"
+  vit_discard_ratio: 0.1
+  overlay_alpha: 0.5
+  colormap: "JET"

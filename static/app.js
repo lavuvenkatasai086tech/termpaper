@@ -1,9 +1,12 @@
 document.addEventListener("DOMContentLoaded", () => {
-    // State
+    // Application State
     let selectedFile = null;
     let selectedSamplePath = null;
     let sampleList = [];
     let currentEnergyThreshold = 0.50;
+    let currentXaiData = null;
+    let activeXaiLayer = "fused";
+    let currentOpacity = 0.50;
 
     // DOM Elements
     const dropzone = document.getElementById("dropzone");
@@ -15,28 +18,42 @@ document.addEventListener("DOMContentLoaded", () => {
     const scanOverlay = document.getElementById("scanOverlay");
     const analyzeBtn = document.getElementById("analyzeBtn");
 
+    // XAI & Modality Controls
+    const xaiControlsCard = document.getElementById("xaiControlsCard");
+    const xaiPills = document.getElementById("xaiPills");
+    const xaiActiveBadge = document.getElementById("xaiActiveBadge");
+    const opacitySlider = document.getElementById("opacitySlider");
+    const opacityVal = document.getElementById("opacityVal");
+    const cnnWeightText = document.getElementById("cnnWeightText");
+    const vitWeightText = document.getElementById("vitWeightText");
+    const modalityCnnBar = document.getElementById("modalityCnnBar");
+    const modalityVitBar = document.getElementById("modalityVitBar");
+
+    // Alerts & Diagnostics
     const globalAlertBanner = document.getElementById("globalAlertBanner");
     const globalAlertTitle = document.getElementById("globalAlertTitle");
     const globalAlertMessage = document.getElementById("globalAlertMessage");
     const closeAlertBannerBtn = document.getElementById("closeAlertBannerBtn");
 
-    const thresholdSlider = document.getElementById("thresholdSlider");
-    const thresholdDisplay = document.getElementById("thresholdDisplay");
-    const headerThreshold = document.getElementById("headerThreshold");
-
     const oodAlertWrapper = document.getElementById("oodAlertWrapper");
-    const oodConfidenceVal = document.getElementById("oodConfidenceVal");
-    const oodThresholdVal = document.getElementById("oodThresholdVal");
+    const oodTitle = document.getElementById("oodTitle");
+    const diagStage = document.getElementById("diagStage");
+    const diagEnergy = document.getElementById("diagEnergy");
+    const diagSim = document.getElementById("diagSim");
+    const diagReason = document.getElementById("diagReason");
     const oodTryAgainBtn = document.getElementById("oodTryAgainBtn");
 
+    // Dataset Browser
     const sampleGrid = document.getElementById("sampleGrid");
     const sampleCount = document.getElementById("sampleCount");
     const classChips = document.getElementById("classChips");
 
+    // Result Containers
     const emptyState = document.getElementById("emptyState");
     const analyzingState = document.getElementById("analyzingState");
     const diagnosisWrapper = document.getElementById("diagnosisWrapper");
 
+    // Diagnostics Fields
     const deviceText = document.getElementById("deviceText");
     const resSeverity = document.getElementById("resSeverity");
     const resTitle = document.getElementById("resTitle");
@@ -44,6 +61,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const resConfidence = document.getElementById("resConfidence");
     const resConfidenceCircle = document.getElementById("resConfidenceCircle");
     const resSummary = document.getElementById("resSummary");
+    const resEnergyScore = document.getElementById("resEnergyScore");
+    const resSimScore = document.getElementById("resSimScore");
+    const disambiguationBox = document.getElementById("disambiguationBox");
+    const disambiguationText = document.getElementById("disambiguationText");
     const probList = document.getElementById("probList");
 
     const symptomsList = document.getElementById("symptomsList");
@@ -58,19 +79,25 @@ document.addEventListener("DOMContentLoaded", () => {
     // Initialize System Status
     fetchHealthStatus();
     loadDatasetSamples();
-    setupThresholdControls();
     setupAlertBanner();
+    setupXaiControls();
 
     // 0. Notification Banner Controls
     function setupAlertBanner() {
         if (closeAlertBannerBtn) {
             closeAlertBannerBtn.addEventListener("click", hideNotificationBanner);
         }
+        if (oodTryAgainBtn) {
+            oodTryAgainBtn.addEventListener("click", () => {
+                resetInput();
+                fileInput.click();
+            });
+        }
     }
 
     function showNotificationBanner(message, type = "danger") {
         if (!globalAlertBanner) return;
-        if (globalAlertTitle) globalAlertTitle.textContent = "";
+        if (globalAlertTitle) globalAlertTitle.textContent = "Invalid Input: ";
         if (globalAlertMessage) globalAlertMessage.textContent = message;
         globalAlertBanner.className = `alert-banner alert-${type}`;
         globalAlertBanner.classList.remove("hidden");
@@ -81,32 +108,11 @@ document.addEventListener("DOMContentLoaded", () => {
         globalAlertBanner.classList.add("hidden");
     }
 
-    // 0.1 Energy Threshold Slider Controls
-    function setupThresholdControls() {
-        if (thresholdSlider) {
-            thresholdSlider.addEventListener("input", (e) => {
-                const val = parseInt(e.target.value, 10);
-                currentEnergyThreshold = val / 100;
-                const formatted = (currentEnergyThreshold >= 0 ? "+" : "") + currentEnergyThreshold.toFixed(2);
-                if (thresholdDisplay) thresholdDisplay.textContent = `${formatted} Energy`;
-                if (headerThreshold) headerThreshold.textContent = `${formatted} Energy`;
-                if (oodThresholdVal) oodThresholdVal.textContent = `${formatted}`;
-            });
-        }
-        if (oodTryAgainBtn) {
-            oodTryAgainBtn.addEventListener("click", () => {
-                resetInput();
-                fileInput.click();
-            });
-        }
-    }
-
     // 1. Health Status
     async function fetchHealthStatus() {
         try {
             const res = await fetch("/api/health");
             const data = await res.json();
-            deviceText.textContent = data.device.toUpperCase();
             if (data.cuda_available) {
                 deviceText.innerHTML = `<span style="color: #10b981;">GPU (CUDA)</span>`;
             } else {
@@ -114,12 +120,6 @@ document.addEventListener("DOMContentLoaded", () => {
             }
             if (data.energy_threshold !== undefined) {
                 currentEnergyThreshold = data.energy_threshold;
-                const intVal = Math.round(currentEnergyThreshold * 100);
-                const formatted = (currentEnergyThreshold >= 0 ? "+" : "") + currentEnergyThreshold.toFixed(2);
-                if (thresholdSlider) thresholdSlider.value = intVal;
-                if (thresholdDisplay) thresholdDisplay.textContent = `${formatted} Energy`;
-                if (headerThreshold) headerThreshold.textContent = `${formatted} Energy`;
-                if (oodThresholdVal) oodThresholdVal.textContent = `${formatted}`;
             }
         } catch (err) {
             console.error("Health check error:", err);
@@ -143,8 +143,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     function renderSamples(filterClass) {
         sampleGrid.innerHTML = "";
-        const filtered = filterClass === "all" 
-            ? sampleList 
+        const filtered = filterClass === "all"
+            ? sampleList
             : sampleList.filter(s => s.class_name.toLowerCase() === filterClass.toLowerCase());
 
         filtered.forEach(sample => {
@@ -158,7 +158,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             item.innerHTML = `
                 <img src="${sample.url}" alt="${displayTitle}" loading="lazy">
-                <div class="sample-tag ${isOod ? 'ood-sample-tag' : ''}">${isOod ? '<i class="fa-solid fa-triangle-exclamation"></i> ' : ''}${displayTitle}</div>
+                <div class="sample-tag ${isOod ? 'ood-sample-tag' : ''}">${isOod ? '<i class="fa-solid fa-shield-halved"></i> ' : ''}${displayTitle}</div>
             `;
 
             item.addEventListener("click", () => {
@@ -173,10 +173,12 @@ document.addEventListener("DOMContentLoaded", () => {
         selectedFile = null;
         selectedSamplePath = sample.relative_path;
         fileInput.value = "";
+        currentXaiData = null;
 
         imagePreview.src = sample.url;
         dropzoneEmpty.classList.add("hidden");
         previewContainer.classList.remove("hidden");
+        if (xaiControlsCard) xaiControlsCard.classList.add("hidden");
         analyzeBtn.disabled = false;
 
         // Auto trigger diagnostic run for snappy demonstration
@@ -185,10 +187,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // 3. Filter Chips
     classChips.addEventListener("click", (e) => {
-        if (e.target.classList.contains("chip")) {
+        const chip = e.target.closest(".chip");
+        if (chip) {
             classChips.querySelectorAll(".chip").forEach(c => c.classList.remove("active"));
-            e.target.classList.add("active");
-            renderSamples(e.target.dataset.class);
+            chip.classList.add("active");
+            renderSamples(chip.dataset.class);
         }
     });
 
@@ -234,12 +237,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
         selectedFile = file;
         selectedSamplePath = null;
+        currentXaiData = null;
 
         const reader = new FileReader();
         reader.onload = (e) => {
             imagePreview.src = e.target.result;
             dropzoneEmpty.classList.add("hidden");
             previewContainer.classList.remove("hidden");
+            if (xaiControlsCard) xaiControlsCard.classList.add("hidden");
             analyzeBtn.disabled = false;
         };
         reader.readAsDataURL(file);
@@ -253,17 +258,19 @@ document.addEventListener("DOMContentLoaded", () => {
     function resetInput() {
         selectedFile = null;
         selectedSamplePath = null;
+        currentXaiData = null;
         fileInput.value = "";
         imagePreview.src = "";
         previewContainer.classList.add("hidden");
         dropzoneEmpty.classList.remove("hidden");
+        if (xaiControlsCard) xaiControlsCard.classList.add("hidden");
         analyzeBtn.disabled = true;
         scanOverlay.classList.add("hidden");
         hideNotificationBanner();
         showState("empty");
     }
 
-    // 5. Run Diagnosis
+    // 5. Trigger Diagnosis
     analyzeBtn.addEventListener("click", triggerDiagnosis);
 
     async function triggerDiagnosis() {
@@ -281,7 +288,7 @@ document.addEventListener("DOMContentLoaded", () => {
             formData.append("sample_path", selectedSamplePath);
         }
         formData.append("energy_threshold", currentEnergyThreshold);
-        formData.append("threshold", currentEnergyThreshold);
+        formData.append("alpha", currentOpacity);
 
         try {
             const startTime = performance.now();
@@ -296,24 +303,24 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             const data = await res.json();
-            // Provide smooth brief scan animation feel
             const elapsed = performance.now() - startTime;
-            const remainingDelay = Math.max(400 - elapsed, 100);
+            const remainingDelay = Math.max(350 - elapsed, 80);
 
             setTimeout(() => {
                 scanOverlay.classList.add("hidden");
                 analyzeBtn.disabled = false;
 
                 // Out-of-Distribution (OOD) / Invalid Input Check
-                if (data.is_ood || data.is_valid === false) {
-                    // Suppress disease output and show simple alert
+                if (data.is_ood || data.is_valid === false || data.status === "INVALID_INPUT") {
+                    if (xaiControlsCard) xaiControlsCard.classList.add("hidden");
                     renderOodAlert(data);
                     showState("ood");
-                    const alertMsg = data.error_message || "Invalid Image: Please upload a valid potato leaf image.";
+                    const alertMsg = data.error_message || "Invalid Input: The uploaded image is not recognized as a valid potato leaf specimen. Please upload a clear image of a potato leaf.";
                     showNotificationBanner(alertMsg, "danger");
                 } else {
                     hideNotificationBanner();
                     renderResults(data);
+                    renderXai(data);
                     showState("results");
                 }
             }, remainingDelay);
@@ -322,7 +329,7 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error("Diagnosis error:", err);
             scanOverlay.classList.add("hidden");
             analyzeBtn.disabled = false;
-            showNotificationBanner("Error analyzing image: " + err.message, "danger");
+            showNotificationBanner("Error analyzing specimen: " + err.message, "danger");
             showState("empty");
         }
     }
@@ -332,26 +339,33 @@ document.addEventListener("DOMContentLoaded", () => {
         const details = data.details || {};
         const conf = data.confidence || 0;
 
-        // Title and Severity
         resTitle.textContent = details.title || data.predicted_class;
         resPathogen.textContent = `Pathogen: ${details.pathogen || 'N/A'}`;
         resSeverity.textContent = details.severity || 'Unknown';
         resSeverity.style.backgroundColor = details.severity_color || '#dc2626';
 
-        // Energy Score for In-Distribution Specimen
-        const resEnergyScore = document.getElementById("resEnergyScore");
         if (resEnergyScore && data.energy_score !== undefined) {
-            resEnergyScore.textContent = `${data.energy_score >= 0 ? "+" : ""}${data.energy_score.toFixed(2)}`;
+            resEnergyScore.textContent = `${data.energy_score >= 0 ? "+" : ""}${Number(data.energy_score).toFixed(2)}`;
+        }
+        if (resSimScore && data.potato_similarity !== undefined) {
+            resSimScore.textContent = `${(data.potato_similarity * 100).toFixed(1)}%`;
         }
 
-        // Confidence circle & value
+        // Pest vs Fungi Disambiguation
+        if (disambiguationBox && disambiguationText) {
+            if (data.disambiguation_note) {
+                disambiguationText.textContent = data.disambiguation_note;
+                disambiguationBox.classList.remove("hidden");
+            } else {
+                disambiguationBox.classList.add("hidden");
+            }
+        }
+
         resConfidence.textContent = `${conf.toFixed(1)}%`;
         resConfidenceCircle.style.background = `conic-gradient(var(--primary) ${conf}%, rgba(255, 255, 255, 0.1) 0)`;
-
-        // Summary text
         resSummary.textContent = details.summary || "";
 
-        // Probability bars
+        // Probability distribution
         probList.innerHTML = "";
         (data.probabilities || []).forEach(p => {
             const row = document.createElement("div");
@@ -365,7 +379,6 @@ document.addEventListener("DOMContentLoaded", () => {
             `;
             probList.appendChild(row);
 
-            // Animate bar width after appending
             setTimeout(() => {
                 const bar = row.querySelector(".prob-bar");
                 bar.style.width = `${Math.min(p.probability, 100)}%`;
@@ -374,21 +387,131 @@ document.addEventListener("DOMContentLoaded", () => {
                 } else {
                     bar.style.background = "linear-gradient(90deg, #475569, #64748b)";
                 }
-            }, 50);
+            }, 40);
         });
 
-        // Populate lists
         populateList(symptomsList, details.symptoms);
         populateList(organicList, details.organic_remedies);
         populateList(chemicalList, details.chemical_remedies);
         populateList(preventionList, details.prevention);
     }
 
-    // 6.1 Render Invalid Input Alert
+    // 6.1 Render Explainable AI (XAI) Suite
+    function renderXai(data) {
+        if (!data.xai) return;
+        currentXaiData = data.xai;
+
+        if (xaiControlsCard) {
+            xaiControlsCard.classList.remove("hidden");
+        }
+
+        // Modality weights bar
+        const weights = data.modality_weights || (data.xai && data.xai.modality_weights) || { cnn_pct: 50, vit_pct: 50 };
+        if (cnnWeightText) cnnWeightText.textContent = `${weights.cnn_pct.toFixed(1)}%`;
+        if (vitWeightText) vitWeightText.textContent = `${weights.vit_pct.toFixed(1)}%`;
+        if (modalityCnnBar) modalityCnnBar.style.width = `${weights.cnn_pct}%`;
+        if (modalityVitBar) modalityVitBar.style.width = `${weights.vit_pct}%`;
+
+        // Default active view to Fused XAI
+        setXaiLayer("fused");
+    }
+
+    function setupXaiControls() {
+        if (xaiPills) {
+            xaiPills.addEventListener("click", (e) => {
+                const pill = e.target.closest(".xai-pill");
+                if (pill && pill.dataset.layer) {
+                    setXaiLayer(pill.dataset.layer);
+                }
+            });
+        }
+
+        if (opacitySlider) {
+            opacitySlider.addEventListener("input", (e) => {
+                const val = parseInt(e.target.value, 10);
+                currentOpacity = val / 100.0;
+                if (opacityVal) opacityVal.textContent = `${val}%`;
+                // Debounce opacity update if needed
+                updateXaiOpacityDebounced();
+            });
+        }
+    }
+
+    let opacityTimer = null;
+    function updateXaiOpacityDebounced() {
+        if (!selectedSamplePath || !currentXaiData) return;
+        clearTimeout(opacityTimer);
+        opacityTimer = setTimeout(async () => {
+            try {
+                const res = await fetch("/api/xai", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        sample_path: selectedSamplePath,
+                        alpha: currentOpacity,
+                    })
+                });
+                if (res.ok) {
+                    const xai = await res.json();
+                    currentXaiData = xai;
+                    setXaiLayer(activeXaiLayer);
+                }
+            } catch (err) {
+                console.error("XAI Opacity update error:", err);
+            }
+        }, 200);
+    }
+
+    function setXaiLayer(layer) {
+        activeXaiLayer = layer;
+        if (xaiPills) {
+            xaiPills.querySelectorAll(".xai-pill").forEach(p => {
+                p.classList.toggle("active", p.dataset.layer === layer);
+            });
+        }
+
+        const layerLabels = {
+            "original": "Original RGB",
+            "gradcam": "CNN Grad-CAM",
+            "rollout": "ViT Rollout",
+            "fused": "Fused XAI"
+        };
+        if (xaiActiveBadge) {
+            xaiActiveBadge.textContent = layerLabels[layer] || layer;
+        }
+
+        if (currentXaiData) {
+            let targetSrc = null;
+            if (layer === "original") targetSrc = currentXaiData.original_b64;
+            else if (layer === "gradcam") targetSrc = currentXaiData.gradcam_b64;
+            else if (layer === "rollout") targetSrc = currentXaiData.rollout_b64;
+            else if (layer === "fused") targetSrc = currentXaiData.fused_b64;
+
+            if (targetSrc && imagePreview) {
+                imagePreview.src = targetSrc;
+            }
+        }
+    }
+
+    // 6.2 Render Invalid Input Alert State
     function renderOodAlert(data) {
-        const oodTitle = document.querySelector(".ood-title");
         if (oodTitle) {
-            oodTitle.textContent = data.error_message || "Please upload a valid potato leaf image.";
+            oodTitle.textContent = data.error_message || "Invalid Input: The uploaded image is not recognized as a valid potato leaf specimen. Please upload a clear image of a potato leaf.";
+        }
+        if (diagStage) {
+            diagStage.textContent = data.rejection_stage || "Stage 1 Gatekeeper";
+        }
+        if (diagEnergy) {
+            const e = data.energy_score !== undefined ? data.energy_score : (data.diagnostic && data.diagnostic.energy_score);
+            const thresh = data.energy_threshold || (data.diagnostic && data.diagnostic.energy_threshold) || 0.50;
+            diagEnergy.textContent = (e !== null && e !== undefined) ? `${e >= 0 ? "+" : ""}${Number(e).toFixed(2)} (Max: +${Number(thresh).toFixed(2)})` : "Failed Gate";
+        }
+        if (diagSim) {
+            const sim = data.potato_similarity !== undefined ? data.potato_similarity : (data.diagnostic && data.diagnostic.potato_similarity);
+            diagSim.textContent = (sim !== null && sim !== undefined) ? `${Number(sim).toFixed(2)} (Min: 0.48)` : "N/A";
+        }
+        if (diagReason) {
+            diagReason.textContent = data.rejection_reason || "Non-Potato / OOD Specimen Rejected";
         }
     }
 
